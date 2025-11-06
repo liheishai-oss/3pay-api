@@ -40,7 +40,7 @@ class ProxyFactory
      */
     private $proxyManager;
 
-    public function __construct(bool $writeProxiesToFile = false, string $proxyDirectory = null)
+    public function __construct(bool $writeProxiesToFile = false, ?string $proxyDirectory = null)
     {
         $this->writeProxiesToFile = $writeProxiesToFile;
         $this->proxyDirectory = $proxyDirectory;
