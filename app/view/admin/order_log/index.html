@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>订单日志查询</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .log-item {
+            border-left: 4px solid #dee2e6;
+            margin-bottom: 15px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 0 8px 8px 0;
+        }
+        .log-item.INFO { border-left-color: #17a2b8; }
+        .log-item.WARN { border-left-color: #ffc107; }
+        .log-item.ERROR { border-left-color: #dc3545; }
+        
+        .log-header {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        
+        .log-content {
+            background: white;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .search-form {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        
+        .order-info {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .timeline {
+            position: relative;
+            padding-left: 30px;
+        }
+        
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 15px;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            background: #dee2e6;
+        }
+        
+        .timeline-item {
+            position: relative;
+            margin-bottom: 20px;
+        }
+        
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -22px;
+            top: 8px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #6c757d;
+        }
+        
+        .timeline-item.INFO::before { background: #17a2b8; }
+        .timeline-item.WARN::before { background: #ffc107; }
+        .timeline-item.ERROR::before { background: #dc3545; }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <div class="col-12">
+                <h2 class="mb-4">
+                    <i class="bi bi-search"></i> 订单日志查询
+                </h2>
+                
+                <!-- 搜索表单 -->
+                <div class="search-form">
+                    <form id="searchForm">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <label for="merchantOrderNo" class="form-label">商户订单号</label>
+                                <input type="text" class="form-control" id="merchantOrderNo" name="merchant_order_no" placeholder="请输入商户订单号">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="platformOrderNo" class="form-label">平台订单号</label>
+                                <input type="text" class="form-control" id="platformOrderNo" name="platform_order_no" placeholder="请输入平台订单号">
+                            </div>
+                            <div class="col-md-4">
+                                <label for="traceId" class="form-label">TraceId</label>
+                                <input type="text" class="form-control" id="traceId" name="trace_id" placeholder="请输入TraceId">
+                            </div>
+                        </div>
+                        <div class="row mt-3">
+                            <div class="col-12">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="bi bi-search"></i> 搜索
+                                </button>
+                                <button type="button" class="btn btn-secondary" onclick="clearForm()">
+                                    <i class="bi bi-arrow-clockwise"></i> 清空
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                
+                <!-- 订单信息 -->
+                <div id="orderInfo" class="order-info" style="display: none;">
+                    <h5><i class="bi bi-info-circle"></i> 订单信息</h5>
+                    <div id="orderInfoContent"></div>
+                </div>
+                
+                <!-- 搜索结果 -->
+                <div id="searchResults" style="display: none;">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5><i class="bi bi-list-ul"></i> 日志记录</h5>
+                        <span class="badge bg-primary" id="logCount">0 条记录</span>
+                    </div>
+                    
+                    <div class="timeline" id="logTimeline">
+                        <!-- 日志记录将在这里显示 -->
+                    </div>
+                </div>
+                
+                <!-- 无结果提示 -->
+                <div id="noResults" class="text-center py-5" style="display: none;">
+                    <i class="bi bi-search" style="font-size: 3rem; color: #6c757d;"></i>
+                    <p class="text-muted mt-3">未找到相关日志记录</p>
+                </div>
+                
+                <!-- 加载中 -->
+                <div id="loading" class="text-center py-5" style="display: none;">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">加载中...</span>
+                    </div>
+                    <p class="mt-2">正在搜索日志记录...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 搜索表单提交
+        document.getElementById('searchForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            searchLogs();
+        });
+        
+        // 搜索日志
+        function searchLogs() {
+            const formData = new FormData(document.getElementById('searchForm'));
+            const params = new URLSearchParams();
+            
+            for (let [key, value] of formData.entries()) {
+                if (value.trim()) {
+                    params.append(key, value.trim());
+                }
+            }
+            
+            if (params.toString() === '') {
+                alert('请至少提供一个搜索条件');
+                return;
+            }
+            
+            showLoading();
+            
+            fetch('/admin/order-log/search?' + params.toString())
+                .then(response => response.json())
+                .then(data => {
+                    hideLoading();
+                    if (data.code === 0) {
+                        displayResults(data.data);
+                    } else {
+                        alert('搜索失败：' + data.msg);
+                    }
+                })
+                .catch(error => {
+                    hideLoading();
+                    console.error('Error:', error);
+                    alert('搜索失败：' + error.message);
+                });
+        }
+        
+        // 显示搜索结果
+        function displayResults(data) {
+            const { logs, order_info, total } = data;
+            
+            // 隐藏其他区域
+            document.getElementById('noResults').style.display = 'none';
+            document.getElementById('searchResults').style.display = 'block';
+            
+            // 显示订单信息
+            if (order_info) {
+                displayOrderInfo(order_info);
+            }
+            
+            // 显示日志记录
+            if (logs && logs.length > 0) {
+                displayLogs(logs);
+                document.getElementById('logCount').textContent = total + ' 条记录';
+            } else {
+                showNoResults();
+            }
+        }
+        
+        // 显示订单信息
+        function displayOrderInfo(orderInfo) {
+            const orderInfoDiv = document.getElementById('orderInfo');
+            const orderInfoContent = document.getElementById('orderInfoContent');
+            
+            orderInfoContent.innerHTML = `
+                <div class="row">
+                    <div class="col-md-3">
+                        <strong>平台订单号：</strong><br>
+                        <code>${orderInfo.platform_order_no}</code>
+                    </div>
+                    <div class="col-md-3">
+                        <strong>商户订单号：</strong><br>
+                        <code>${orderInfo.merchant_order_no}</code>
+                    </div>
+                    <div class="col-md-3">
+                        <strong>TraceId：</strong><br>
+                        <code>${orderInfo.trace_id}</code>
+                    </div>
+                    <div class="col-md-3">
+                        <strong>订单金额：</strong><br>
+                        <span class="text-primary">¥${orderInfo.order_amount}</span>
+                    </div>
+                </div>
+                <div class="row mt-2">
+                    <div class="col-md-3">
+                        <strong>支付状态：</strong><br>
+                        <span class="badge bg-${getStatusColor(orderInfo.pay_status)}">${orderInfo.pay_status_text}</span>
+                    </div>
+                    <div class="col-md-3">
+                        <strong>客户端IP：</strong><br>
+                        <code>${orderInfo.client_ip || '未知'}</code>
+                    </div>
+                    <div class="col-md-3">
+                        <strong>创建时间：</strong><br>
+                        ${orderInfo.created_at}
+                    </div>
+                    <div class="col-md-3">
+                        <strong>支付时间：</strong><br>
+                        ${orderInfo.pay_time || '未支付'}
+                    </div>
+                </div>
+            `;
+            
+            orderInfoDiv.style.display = 'block';
+        }
+        
+        // 显示日志记录
+        function displayLogs(logs) {
+            const timeline = document.getElementById('logTimeline');
+            timeline.innerHTML = '';
+            
+            logs.forEach(log => {
+                const logItem = document.createElement('div');
+                logItem.className = `timeline-item ${log.log_level}`;
+                
+                logItem.innerHTML = `
+                    <div class="log-item ${log.log_level}">
+                        <div class="log-header">
+                            <div>
+                                <h6 class="mb-1">${log.node}</h6>
+                                <small class="text-muted">${log.node_description}</small>
+                            </div>
+                            <div class="text-end">
+                                <span class="badge bg-${getLogLevelColor(log.log_level)}">${log.log_level}</span>
+                                <br>
+                                <small class="text-muted">${log.created_at}</small>
+                            </div>
+                        </div>
+                        <div class="log-content">
+                            <pre>${JSON.stringify(log.content, null, 2)}</pre>
+                        </div>
+                        <div class="mt-2">
+                            <small class="text-muted">
+                                <i class="bi bi-geo-alt"></i> ${log.ip || '未知'} | 
+                                <i class="bi bi-browser"></i> ${log.user_agent ? log.user_agent.substring(0, 50) + '...' : '未知'}
+                            </small>
+                        </div>
+                    </div>
+                `;
+                
+                timeline.appendChild(logItem);
+            });
+        }
+        
+        // 显示无结果
+        function showNoResults() {
+            document.getElementById('searchResults').style.display = 'none';
+            document.getElementById('noResults').style.display = 'block';
+        }
+        
+        // 显示加载中
+        function showLoading() {
+            document.getElementById('searchResults').style.display = 'none';
+            document.getElementById('noResults').style.display = 'none';
+            document.getElementById('orderInfo').style.display = 'none';
+            document.getElementById('loading').style.display = 'block';
+        }
+        
+        // 隐藏加载中
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+        
+        // 清空表单
+        function clearForm() {
+            document.getElementById('searchForm').reset();
+            document.getElementById('searchResults').style.display = 'none';
+            document.getElementById('noResults').style.display = 'none';
+            document.getElementById('orderInfo').style.display = 'none';
+        }
+        
+        // 获取日志级别颜色
+        function getLogLevelColor(level) {
+            switch (level) {
+                case 'ERROR': return 'danger';
+                case 'WARN': return 'warning';
+                case 'INFO': return 'info';
+                default: return 'secondary';
+            }
+        }
+        
+        // 获取状态颜色
+        function getStatusColor(status) {
+            switch (status) {
+                case 0: return 'warning';  // 待支付
+                case 1: return 'success';  // 已支付
+                case 2: return 'secondary'; // 已关闭
+                case 3: return 'info';     // 已退款
+                default: return 'secondary';
+            }
+        }
+        
+    </script>
+</body>
+</html>
+

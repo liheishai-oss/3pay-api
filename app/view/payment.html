@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>订单支付 - <?=$subject?></title>
+    <script>
+        // 真实二维码生成方案（使用在线API）
+        function generateRealQRCode() {
+            const qrCodeElement = document.getElementById("qrCode");
+            const qrCodeUrl = window.location.href;
+            
+            if (!qrCodeElement) {
+                console.error("二维码容器未找到");
+                return;
+            }
+            
+            // 清空容器
+            qrCodeElement.innerHTML = "";
+            
+            // 创建二维码图片
+            const qrImage = document.createElement('img');
+            qrImage.style.cssText = `
+                width: 180px;
+                height: 180px;
+                border-radius: 8px;
+                border: 2px solid #007bff;
+                background: #fff;
+                display: block;
+                margin: 0 auto;
+            `;
+            
+            // 使用多个二维码API作为备用
+            const qrApis = [
+                `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrCodeUrl)}`,
+                `https://chart.googleapis.com/chart?chs=180x180&cht=qr&chl=${encodeURIComponent(qrCodeUrl)}`,
+                `https://qr-server.com/api/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrCodeUrl)}`
+            ];
+            
+            let currentApiIndex = 0;
+            
+            function tryNextApi() {
+                if (currentApiIndex >= qrApis.length) {
+                    // 所有API都失败，显示备用方案
+                    showFallbackQR();
+                    return;
+                }
+                
+                qrImage.src = qrApis[currentApiIndex];
+                qrImage.onload = function() {
+                    console.log(`二维码生成成功 (API ${currentApiIndex + 1})`);
+                    qrCodeElement.appendChild(qrImage);
+                };
+                
+                qrImage.onerror = function() {
+                    console.log(`二维码API ${currentApiIndex + 1} 失败，尝试下一个`);
+                    currentApiIndex++;
+                    tryNextApi();
+                };
+            }
+            
+            function showFallbackQR() {
+                console.log("所有二维码API都失败，显示备用方案");
+                qrCodeElement.innerHTML = `
+                    <div style="
+                        width: 180px;
+                        height: 180px;
+                        margin: 0 auto;
+                        border: 2px dashed #007bff;
+                        border-radius: 8px;
+                        background: #f8f9fa;
+                        display: flex;
+                        flex-direction: column;
+                        align-items: center;
+                        justify-content: center;
+                        text-align: center;
+                        color: #666;
+                    ">
+                        <div style="font-size: 24px; margin-bottom: 10px;">📱</div>
+                        <div style="font-size: 14px; margin-bottom: 5px;">扫码支付</div>
+                        <div style="font-size: 10px; color: #999;">二维码生成失败</div>
+                    </div>
+                `;
+            }
+            
+            // 开始尝试第一个API
+            tryNextApi();
+        }
+        
+        // 页面加载完成后生成真实二维码（仅在扫码支付开启时）
+        document.addEventListener('DOMContentLoaded', function() {
+            <?php if ($scanPayEnabled): ?>
+            setTimeout(generateRealQRCode, 100);
+            <?php endif; ?>
+            
+            // 检查是否需要自动支付（OAuth授权完成后）
+            <?php if ($autoPay): ?>
+            console.log("🎯 OAuth授权成功，自动触发支付");
+            
+            // 显示提示信息
+            const payButton = document.getElementById('payButton');
+            if (payButton) {
+                payButton.textContent = '✅ 授权成功，正在调起支付...';
+                payButton.style.background = '#52c41a';
+            }
+            
+            // 1秒后自动触发支付
+            setTimeout(function() {
+                console.log("🚀 自动触发支付");
+                submitPayment();
+            }, 1000);
+            <?php endif; ?>
+        });
+    </script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .payment-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            padding: 30px;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+        .logo {
+            width: 60px;
+            height: 60px;
+            background: #1677ff;
+            border-radius: 50%;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .title {
+            font-size: 24px;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 30px;
+        }
+        .order-info {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            text-align: left;
+        }
+        .order-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        .order-item:last-child {
+            margin-bottom: 0;
+            font-weight: bold;
+            font-size: 16px;
+            color: #1677ff;
+            border-top: 1px solid #e0e0e0;
+            padding-top: 10px;
+        }
+        .pay-button {
+            background: #1677ff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 15px 40px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+        }
+        .pay-button:hover {
+            background: #4096ff;
+            transform: translateY(-2px);
+        }
+        .pay-button:active {
+            transform: translateY(0);
+        }
+        .loading {
+            display: none;
+            margin-top: 20px;
+        }
+        .loading-text {
+            color: #666;
+            font-size: 14px;
+        }
+        .spinner {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #1677ff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .qr-code-container {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .qr-code-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+        }
+        .qr-code {
+            width: 200px;
+            height: 200px;
+            margin: 0 auto 15px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .qr-code-text {
+            font-size: 14px;
+            color: #666;
+        }
+        .countdown-item {
+            border-top: 1px solid #e0e0e0;
+            padding-top: 10px;
+            margin-top: 10px;
+        }
+        .countdown {
+            font-weight: bold;
+            color: #ff6b6b;
+            font-size: 16px;
+        }
+        .countdown.warning {
+            color: #ff9500;
+        }
+        .countdown.danger {
+            color: #ff3b30;
+            animation: blink 1s infinite;
+        }
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
+        .payment-notice {
+            background: #fff9e6;
+            border: 1px solid #ffd700;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+            text-align: left;
+            font-size: 13px;
+            line-height: 1.8;
+        }
+        .payment-notice-item {
+            margin-bottom: 8px;
+        }
+        .payment-notice-item:last-child {
+            margin-bottom: 0;
+        }
+        .payment-notice-red {
+            color: #ff0000;
+            font-weight: bold;
+        }
+        .payment-notice-footer {
+            margin-top: 10px;
+            text-align: center;
+            font-weight: bold;
+            color: #ff6b00;
+        }
+    </style>
+</head>
+<body>
+    <div class="payment-container">
+        <div class="logo">支</div>
+        <div class="title">订单支付</div>
+        <div class="subtitle">请确认订单信息后完成支付</div>
+        
+        <div class="order-info">
+            <div class="order-item">
+                <span>订单号：</span>
+                <span><?=$orderNo?></span>
+            </div>
+            <div class="order-item">
+                <span>支付金额：</span>
+                <span>¥<?=$amount?></span>
+            </div>
+            <div class="order-item countdown-item">
+                <span>剩余时间：</span>
+                <span id="countdown" class="countdown">计算中...</span>
+            </div>
+        </div>
+        
+        <?php if ($scanPayEnabled): ?>
+        <div class="qr-code-container">
+            <div class="qr-code-title">扫码支付</div>
+            <div class="qr-code" id="qrCode"></div>
+            <div class="qr-code-text">请使用支付宝扫描二维码完成支付</div>
+        </div>
+        <?php endif; ?>
+            
+            <!-- 支付注意事项 -->
+        <div class="payment-notice" style="margin-top: 20px; margin-bottom: 30px;">
+                <div class="payment-notice-item">1、请勿忘记支付的金额、时间、备注，有些用户以忘记购买什么产品的理由发起投诉，此类用户一律永久封禁。</div>
+                <div class="payment-notice-item">2、对产品的使用有疑问的，联系在线客服</div>
+                <div class="payment-notice-item payment-notice-red">3、客服处理需要时间，请耐心等待</div>
+                <div class="payment-notice-item payment-notice-red">4、部分不沟通，直接发起投诉的，将永久封禁账户！</div>
+                <div class="payment-notice-footer">注意:支付保赔付，安全保障，感谢您的参与!!</div>
+            </div>
+        
+        <button id="payButton" class="pay-button" onclick="submitPayment()">
+            <?php if ($isMobile): ?>
+                📱 立即支付
+            <?php else: ?>
+                💳 立即支付
+            <?php endif; ?>
+        </button>
+        
+        <!-- 🔍 调试按钮：查看协议地址 -->
+        <button onclick="showDebugSchemeUrl()" style="width: 100%; background: #6c757d; color: white; border: none; padding: 15px 30px; font-size: 16px; border-radius: 8px; cursor: pointer; margin-top: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);">
+            🔍 查看调起协议地址（调试）
+        </button>
+
+        
+        <!-- 调试信息显示区域 -->
+        <div id="debugInfo" style="display: none; background: #1e1e1e; color: #00ff00; padding: 15px; margin: 20px 0; border-radius: 8px; font-family: monospace; font-size: 12px; overflow-x: auto; max-height: 400px; overflow-y: auto;">
+            <div style="color: #fff; font-weight: bold; margin-bottom: 10px;">🔍 调试信息（控制台输出）</div>
+            <div id="debugContent"></div>
+            </div>
+
+        
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <div class="loading-text">正在跳转到支付宝...</div>
+            <div id="jumpUrl" style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.9); border-radius: 8px; font-size: 11px; word-break: break-all; color: #333; display: none; max-width: 90%; text-align: left;"></div>
+                </div>
+        
+        <!-- 隐藏的支付表单 -->
+        <?=$paymentForm?>
+                </div>
+
+    <script>
+        // ========== 调试信息收集 ==========
+        let debugLogs = [];
+        
+        // 重写console.log以收集调试信息
+        const originalConsoleLog = console.log;
+        console.log = function() {
+            originalConsoleLog.apply(console, arguments);
+            const message = Array.from(arguments).map(arg => 
+                typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
+            ).join(' ');
+            debugLogs.push(message);
+        };
+        
+        // 切换调试信息显示
+        function toggleDebugInfo() {
+            const debugInfo = document.getElementById('debugInfo');
+            const debugContent = document.getElementById('debugContent');
+            
+            if (debugInfo.style.display === 'none') {
+                debugInfo.style.display = 'block';
+                if (debugContent && debugLogs.length > 0) {
+                    debugContent.innerHTML = debugLogs.map(log => {
+                        const escaped = log.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                        return `<div style="margin: 5px 0; padding: 5px; border-bottom: 1px solid #333; word-break: break-all;">${escaped}</div>`;
+                    }).join('');
+                }
+            } else {
+                debugInfo.style.display = 'none';
+            }
+        }
+        
+        // 显示协议地址弹窗
+        function showSchemeUrlDialog(schemeUrl, oauthUrl, callback) {
+            // 创建遮罩层
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0,0,0,0.8);
+                z-index: 9999;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 20px;
+            `;
+            
+            // 创建弹窗内容
+            const dialog = document.createElement('div');
+            dialog.style.cssText = `
+                background: white;
+                border-radius: 10px;
+                padding: 20px;
+                max-width: 90%;
+                max-height: 80%;
+                overflow-y: auto;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            `;
+            
+            // 转义schemeUrl中的特殊字符
+            const escapedUrl = schemeUrl.replace(/'/g, "&#39;").replace(/"/g, "&quot;");
+            
+            // 判断是简单模式还是OAuth模式
+            const isSimpleMode = !oauthUrl.includes('openauth.alipay.com');
+            
+            let detailsHtml = '';
+            
+            if (isSimpleMode) {
+                // 简单模式：直接打开URL
+                detailsHtml = `
+                    <div style="margin-bottom: 15px; background: #d1ecf1; padding: 15px; border-radius: 8px; border: 2px solid #17a2b8;">
+                        <div style="font-weight: bold; color: #0c5460; margin-bottom: 10px;">📱 APP调起测试</div>
+                        <div style="margin: 5px 0; font-size: 13px; color: #0c5460;">
+                            <strong>目标地址:</strong> 
+                            <div style="background: white; padding: 8px; border-radius: 4px; margin-top: 5px; word-break: break-all;">
+                                <code style="font-weight: bold; color: #0c5460;">${oauthUrl}</code>
+                </div>
+            </div>
+                        <div style="margin-top: 10px; font-size: 13px; color: #0c5460;">
+                            <strong>说明：</strong> 此模式用于测试 alipays:// 协议调起功能
+            </div>
+        </div>
+                `;
+            } else {
+                // OAuth模式：完整的授权流程
+                const redirectUriMatch = oauthUrl.match(/redirect_uri=([^&]+)/);
+                const redirectUri = redirectUriMatch ? decodeURIComponent(redirectUriMatch[1]) : '未找到';
+                const appIdMatch = oauthUrl.match(/app_id=([^&]+)/);
+                const appId = appIdMatch ? appIdMatch[1] : '未找到';
+                const scopeMatch = oauthUrl.match(/scope=([^&]+)/);
+                const scope = scopeMatch ? scopeMatch[1] : '未找到';
+                const stateMatch = oauthUrl.match(/state=([^&]+)/);
+                const state = stateMatch ? decodeURIComponent(stateMatch[1]) : '未找到';
+                
+                detailsHtml = `
+                    <div style="margin-bottom: 15px; background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #dee2e6;">
+                        <div style="font-weight: bold; color: #333; margin-bottom: 10px;">📋 OAuth授权参数详情：</div>
+                        <div style="margin: 5px 0; font-size: 13px;"><strong>APP ID:</strong> <code style="background: #e9ecef; padding: 2px 6px; border-radius: 3px;">${appId}</code></div>
+                        <div style="margin: 5px 0; font-size: 13px;"><strong>Scope:</strong> <code style="background: #e9ecef; padding: 2px 6px; border-radius: 3px;">${scope}</code></div>
+                        <div style="margin: 5px 0; font-size: 13px;"><strong>State:</strong> <code style="background: #e9ecef; padding: 2px 6px; border-radius: 3px;">${state}</code></div>
+                        <div style="margin: 5px 0; font-size: 13px;">
+                            <strong>Redirect URI:</strong> 
+                            <div style="background: ${redirectUri.includes('/oauth/callback') ? '#d4edda' : '#f8d7da'}; padding: 8px; border-radius: 4px; margin-top: 5px; word-break: break-all; border: 2px solid ${redirectUri.includes('/oauth/callback') ? '#28a745' : '#dc3545'};">
+                                <code style="font-weight: bold; color: ${redirectUri.includes('/oauth/callback') ? '#155724' : '#721c24'};">${redirectUri}</code>
+                                ${redirectUri.includes('/oauth/callback') ? ' ✅ 正确' : ' ⚠️ 地址不正确！'}
+                </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            dialog.innerHTML = `
+                <h3 style="margin: 0 0 15px 0; color: #333; font-size: 18px;">🚀 调起支付宝APP的完整协议地址</h3>
+                
+                <div style="margin-bottom: 15px;">
+                    <div style="font-weight: bold; color: #666; margin-bottom: 5px;">📱 Alipays Scheme URL:</div>
+                    <textarea id="schemeUrlTextarea" readonly style="width: 100%; height: 120px; padding: 10px; border: 2px solid #007bff; border-radius: 5px; font-size: 12px; font-family: monospace; resize: vertical;">${schemeUrl}</textarea>
+                    <button id="copyBtn" style="margin-top: 5px; background: #007bff; color: white; border: none; padding: 8px 16px; border-radius: 5px; cursor: pointer;">📋 复制完整地址</button>
+            </div>
+                
+                <div style="margin-bottom: 15px;">
+                    <div style="font-weight: bold; color: #666; margin-bottom: 5px;">🌐 ${isSimpleMode ? '目标URL' : 'OAuth授权URL'} (解码后):</div>
+                    <textarea readonly style="width: 100%; height: 80px; padding: 10px; border: 1px solid #ccc; border-radius: 5px; font-size: 12px; font-family: monospace; resize: vertical;">${oauthUrl}</textarea>
+        </div>
+        
+                ${detailsHtml}
+                
+                <div style="background: #fff3cd; padding: 10px; border-radius: 5px; margin-bottom: 15px; border: 1px solid #ffc107;">
+                    <strong>💡 使用说明：</strong><br>
+                    1. 上面显示的是完整的调起地址<br>
+                    2. 点击"继续"后会自动调起支付宝APP<br>
+                    3. ${isSimpleMode ? 'APP将会打开指定页面' : '授权成功后会返回支付页面，并自动完成支付'}
+    </div>
+
+                <button id="continueBtn" style="width: 100%; background: #28a745; color: white; border: none; padding: 12px; border-radius: 5px; font-size: 16px; cursor: pointer;">✅ 我知道了，继续调起APP</button>
+            `;
+            
+            overlay.appendChild(dialog);
+            document.body.appendChild(overlay);
+            
+            // 复制按钮事件
+            const copyBtn = dialog.querySelector('#copyBtn');
+            copyBtn.addEventListener('click', function() {
+                const textarea = dialog.querySelector('#schemeUrlTextarea');
+                copyToClipboard(textarea.value, copyBtn);
+            });
+            
+            // 继续按钮事件
+            const continueBtn = dialog.querySelector('#continueBtn');
+            continueBtn.addEventListener('click', function() {
+                overlay.remove();
+                if (callback) callback();
+            });
+            
+            // 点击遮罩层关闭
+            overlay.addEventListener('click', function(e) {
+                if (e.target === overlay) {
+                    overlay.remove();
+                }
+            });
+        }
+        
+        // 调试：手动查看协议地址
+        function showDebugSchemeUrl() {
+            // 🧪 测试方案选择
+            const TEST_MODE = 2;  // 1=直接跳百度, 2=OAuth授权流程
+            
+            let targetUrl, alipayAuthUrl;
+            
+            if (TEST_MODE === 1) {
+                // 方案1: 简单测试（直接打开当前页面）
+                const currentUrl = window.location.href.split('?')[0];
+                const orderNumber = "<?= $orderNo ?>";
+                targetUrl = `${currentUrl}?order_number=${orderNumber}`;
+                alipayAuthUrl = `alipays://platformapi/startapp?appId=20000067&url=${encodeURIComponent(targetUrl)}`;
+                
+                console.log("🧪 测试模式1: 简单测试");
+                console.log("Target URL:", targetUrl);
+                console.log("Alipays Scheme:", alipayAuthUrl);
+                
+            } else {
+                // 方案2: 完整的OAuth授权流程
+                const appId = "<?= $subjectObj->alipay_app_id ?? '' ?>";
+                const scope = "auth_base";
+                const orderNumber = "<?= $orderNo ?>";
+                // 使用专门的OAuth回调路由
+                const baseUrl = window.location.origin;
+                const fullRedirectUrl = `${baseUrl}/oauth/callback`;
+                const redirectUri = encodeURIComponent(fullRedirectUrl);
+                const state = orderNumber;
+                
+                targetUrl = `https://openauth.alipay.com/oauth2/publicAppAuthorize.htm?app_id=${appId}&scope=${scope}&redirect_uri=${redirectUri}&state=${state}`;
+                alipayAuthUrl = `alipays://platformapi/startapp?appId=20000067&url=${encodeURIComponent(targetUrl)}`;
+                
+                console.log("OAuth授权流程");
+                console.log("OAuth URL:", targetUrl);
+                console.log("Alipays Scheme:", alipayAuthUrl);
+            }
+            
+            // 显示弹窗（不自动跳转）
+            showSchemeUrlDialog(alipayAuthUrl, targetUrl, null);
+        }
+        
+        // 复制到剪贴板
+        function copyToClipboard(text, button) {
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(text).then(() => {
+                    const originalText = button.textContent;
+                    button.textContent = '✅ 已复制！';
+                    button.style.background = '#28a745';
+                    setTimeout(() => {
+                        button.textContent = originalText;
+                        button.style.background = '#007bff';
+                    }, 2000);
+                }).catch(err => {
+                    alert('复制失败，请手动复制');
+                });
+            } else {
+                // 降级方案
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                try {
+                    document.execCommand('copy');
+                    button.textContent = '✅ 已复制！';
+                    button.style.background = '#28a745';
+                    setTimeout(() => {
+                        button.textContent = '📋 复制完整地址';
+                        button.style.background = '#007bff';
+                    }, 2000);
+                } catch (err) {
+                    alert('复制失败，请手动复制');
+                }
+                document.body.removeChild(textarea);
+            }
+        }
+        // ====================================
+        
+        function submitPayment() {
+            // 获取元素引用（供错误处理使用）
+            const payButton = document.getElementById("payButton");
+            const loading = document.getElementById("loading");
+            
+            console.log("========== 点击立即支付 ==========");
+            console.log("设备类型: <?= $isMobile ? '移动设备' : 'PC设备' ?>");
+            console.log("是否支付宝浏览器: <?= $isAlipay ? 'true' : 'false' ?>");
+            console.log("是否微信浏览器: <?= $isWeChat ? 'true' : 'false' ?>");
+            console.log("需要OAuth: <?= $needOAuth ? 'true' : 'false' ?>");
+            console.log("已有buyer_id: <?= $hasBuyerId ? 'true' : 'false' ?>");
+            console.log("====================================");
+            
+            <?php if ($isMobile): ?>
+            <?php if ($isAlipay): ?>
+            // 支付宝浏览器：直接跳转（不显示加载动画，避免DOM重绘延迟）
+            console.log("支付宝浏览器，立即跳转");
+            
+            // OAuth授权流程
+            const TEST_MODE = 2;  // 1=直接跳百度, 2=OAuth授权流程
+            
+            let targetUrl;
+            if (TEST_MODE === 1) {
+                const currentUrl = window.location.href.split('?')[0];
+                const orderNumber = "<?= $orderNo ?>";
+                targetUrl = `${currentUrl}?order_number=${orderNumber}`;
+                console.log("🧪 测试模式1: 简单测试");
+            } else {
+                const appId = "<?= $subjectObj->alipay_app_id ?? '' ?>";
+                const scope = "auth_base";
+                const orderNumber = "<?= $orderNo ?>";
+                // 使用专门的OAuth回调路由
+                const baseUrl = window.location.origin;
+                const fullRedirectUrl = `${baseUrl}/oauth/callback`;
+                const redirectUri = encodeURIComponent(fullRedirectUrl);
+                const state = orderNumber;
+                targetUrl = `https://openauth.alipay.com/oauth2/publicAppAuthorize.htm?app_id=${appId}&scope=${scope}&redirect_uri=${redirectUri}&state=${state}`;
+                console.log("OAuth授权流程，授权后将返回支付页面");
+            }
+            
+            console.log("🚀 支付宝浏览器 - 立即跳转到:", targetUrl);
+            
+            // 🚀 立即跳转到目标URL（移除延迟）
+            window.location.href = targetUrl;
+            <?php elseif ($isWeChat): ?>
+            // 微信浏览器：提示用户用外部浏览器打开
+            console.log("微信浏览器，提示外部浏览器打开");
+            alert("检测到微信浏览器，请点击右上角菜单，选择\"在浏览器中打开\"来完成支付！");
+            <?php else: ?>
+            // 其他移动端浏览器：尝试调起支付宝APP
+            console.log("移动端浏览器，尝试调起支付宝APP");
+            
+            // 立即执行，移除延迟
+            try {
+                const needOAuth = <?= $needOAuth ? 'true' : 'false' ?>;
+                const hasBuyerId = <?= $hasBuyerId ? 'true' : 'false' ?>;
+                console.log("OAuth状态:", { needOAuth, hasBuyerId });
+                    
+                // 如果需要OAuth授权
+                if (needOAuth) {
+                    console.log("需要OAuth授权，调起支付宝APP跳转到授权页面");
+                    
+                    // OAuth授权流程（与调试按钮保持一致）
+                    const TEST_MODE = 2;  // 1=直接跳百度, 2=OAuth授权流程
+                    
+                    let targetUrl;
+                    
+                    if (TEST_MODE === 1) {
+                        // 方案1: 简单测试（直接打开当前页面）
+                        const currentUrl = window.location.href.split('?')[0];
+                        const orderNumber = "<?= $orderNo ?>";
+                        targetUrl = `${currentUrl}?order_number=${orderNumber}`;
+                        console.log("🧪 测试模式1: 简单测试");
+                        console.log("Target URL:", targetUrl);
+                        
+                    } else {
+                        // 方案2: 完整的OAuth授权流程
+                        const appId = "<?= $subjectObj->alipay_app_id ?? '' ?>";
+                        const scope = "auth_base";
+                            const orderNumber = "<?= $orderNo ?>";
+                            // 使用专门的OAuth回调路由
+                            const baseUrl = window.location.origin;
+                            const fullRedirectUrl = `${baseUrl}/oauth/callback`;
+                            const redirectUri = encodeURIComponent(fullRedirectUrl);
+                            const state = orderNumber;
+                            
+                            targetUrl = `https://openauth.alipay.com/oauth2/publicAppAuthorize.htm?app_id=${appId}&scope=${scope}&redirect_uri=${redirectUri}&state=${state}`;
+                            console.log("OAuth授权流程，授权后将返回支付页面");
+                            console.log("OAuth URL:", targetUrl);
+                        }
+                        
+                        const oauthBaseUrl = targetUrl;
+                        
+                        // 🧪 测试多种方案
+                        
+                        // 方案1: 使用20000067（通用浏览器appId）- 当前使用
+                        const alipayAuthUrl1 = `alipays://platformapi/startapp?appId=20000067&url=${encodeURIComponent(oauthBaseUrl)}`;
+                        
+                        // 方案2: 浏览器直接跳转（不调起APP）
+                        const alipayAuthUrl2 = oauthBaseUrl;
+                        
+                        // 方案3: 使用支付宝的另一个scheme
+                        const alipayAuthUrl3 = `alipay://platformapi/startapp?appId=20000067&url=${encodeURIComponent(oauthBaseUrl)}`;
+                        
+                        // 方案4: 不带appId参数
+                        const alipayAuthUrl4 = `alipays://platformapi/startapp?url=${encodeURIComponent(oauthBaseUrl)}`;
+                        
+                        // 🔧 切换这里来测试不同方案（1-4）
+                        const TEST_SCHEME = 1;  // 方案1：使用alipays协议
+                        
+                        let alipayAuthUrl;
+                        switch(TEST_SCHEME) {
+                            case 1: alipayAuthUrl = alipayAuthUrl1; break;
+                            case 2: alipayAuthUrl = alipayAuthUrl2; break;
+                            case 3: alipayAuthUrl = alipayAuthUrl3; break;
+                            case 4: alipayAuthUrl = alipayAuthUrl4; break;
+                            default: alipayAuthUrl = alipayAuthUrl2;
+                        }
+
+                        console.log("========== OAuth授权调起（详细分析）==========");
+                        console.log("🧪 测试模式：" + (TEST_MODE === 1 ? "直接打开百度" : "OAuth授权流程"));
+                        console.log("📌 当前使用协议方案：" + TEST_SCHEME);
+                        console.log("");
+                        console.log("测试模式说明：");
+                        console.log("  TEST_MODE = 1: 直接在APP内打开百度网页 ✅ 当前");
+                        console.log("  TEST_MODE = 2: 完整的OAuth授权流程");
+                        console.log("");
+                        console.log("协议方案说明：");
+                        console.log("  方案1: alipays://platformapi/startapp?appId=20000067&url=... ✅ 当前");
+                        console.log("  方案2: 浏览器直接跳转（不调起APP）");
+                        console.log("  方案3: alipay://platformapi/startapp?appId=20000067&url=...");
+                        console.log("  方案4: alipays://platformapi/startapp?url=...");
+                        console.log("");
+                        alert(10)
+                        if (TEST_MODE === 1) {
+                            console.log("步骤1️⃣：目标URL");
+                            console.log("  🌐 直接打开:", oauthBaseUrl);
+                        } else {
+                            console.log("步骤1️⃣：基础参数");
+                            console.log("  📱 APP ID: (在TEST_MODE=2时显示)");
+                            console.log("  🔐 Scope: auth_base");
+                            console.log("");
+                            console.log("步骤2️⃣：OAuth授权URL");
+                            console.log("  🌐 OAuth Base URL:");
+                            console.log("     ", oauthBaseUrl);
+                        }
+                        console.log("");
+                        console.log("步骤2️⃣：调起支付宝APP");
+                        console.log("  🚀 Alipay Scheme URL:");
+                        console.log("     ", alipayAuthUrl);
+                        console.log("");
+                        console.log("步骤3️⃣：URL解码验证");
+                        const urlParam = alipayAuthUrl.split('&url=')[1] || alipayAuthUrl.split('?url=')[1];
+                        if (urlParam) {
+                            console.log("  🔓 解码后的目标URL:");
+                            console.log("     ", decodeURIComponent(urlParam));
+                        }
+                        console.log("");
+                        console.log("步骤4️⃣：测试说明");
+                        console.log("  🎯 操作步骤：");
+                        console.log("     1. 点击支付按钮");
+                        if (TEST_MODE === 1) {
+                            console.log("     2. 支付宝APP应该会直接打开百度网页");
+                            console.log("     3. 验证APP内是否能正常显示百度");
+                        } else {
+                            console.log("     2. 跳转到支付宝APP进行OAuth授权");
+                            console.log("     3. 授权成功后会跳转到百度");
+                            console.log("     4. 查看百度地址栏的auth_code参数");
+                        }
+                        console.log("");
+                        console.log("📋 可以直接在手机浏览器地址栏输入上面的alipays地址进行测试");
+                        console.log("====================================");
+                        console.log("");
+                        console.log("⚡ 即将跳转到:", alipayAuthUrl);
+                        console.log("");
+                        
+                        // 📺 在页面上显示即将跳转的URL
+                        const jumpUrlDiv = document.getElementById('jumpUrl');
+                        console.log("🚀 立即跳转到:", alipayAuthUrl);
+                        
+                        // 🚀 立即跳转（移除延迟）
+                        window.location.href = alipayAuthUrl;
+                        return;
+                    }
+                    
+                    // 已有buyer_id，直接支付
+                    console.log("已有buyer_id，准备调起支付");
+                    
+                    // 获取支付表单
+                    const form = document.forms["alipaysubmit"];
+                    if (!form) {
+                        alert(15)
+                        console.error("未找到支付表单");
+                        alert("支付表单不存在，请重新加载页面");
+                        payButton.style.display = "block";
+                        loading.style.display = "none";
+                        return;
+                    }
+                    
+                    // 提取表单action URL
+                    const actionUrl = form.getAttribute('action');
+                    console.log("支付表单URL:", actionUrl);
+                    
+                    if (actionUrl) {
+                        alert(16)
+                        // 使用支付宝协议调起APP并在APP内打开支付页面
+                        const alipayScheme = 'alipays://platformapi/startapp?appId=20000067&url=' + encodeURIComponent(actionUrl);
+                        
+                        console.log("========== 支付调起 ==========");
+                        console.log("💰 支付网关URL:");
+                        console.log(actionUrl);
+                        console.log("");
+                        console.log("🚀 调起支付宝APP的完整地址:");
+                        console.log(alipayScheme);
+                        console.log("");
+                        console.log("📋 可以直接在手机浏览器地址栏输入上面的alipays地址进行测试");
+                        console.log("====================================");
+                        
+                        // 记录页面可见状态
+                        let pageHidden = false;
+                        let appLaunched = false;
+                        
+                        // 监听页面隐藏事件（APP被调起）
+                        const visibilityHandler = function() {
+                            if (document.hidden) {
+                                pageHidden = true;
+                                appLaunched = true;
+                                console.log("APP已被调起，页面隐藏");
+                                // APP已调起，移除监听器
+                                document.removeEventListener('visibilitychange', visibilityHandler);
+                                window.removeEventListener('blur', blurHandler);
+                            }
+                        };
+                        document.addEventListener('visibilitychange', visibilityHandler);
+                        
+                        // 记录窗口失去焦点（用户可能切换到了APP）
+                        const blurHandler = function() {
+                            console.log("窗口失去焦点，可能已切换到APP");
+                        };
+                        window.addEventListener('blur', blurHandler);
+                        
+                        // 尝试调起APP
+                        window.location.href = alipayScheme;
+                        
+                        // 等待3秒，检查APP是否被调起
+                        setTimeout(function() {
+                            // 如果APP没被调起，提示用户
+                            if (!appLaunched && !pageHidden) {
+                                console.log("APP调起失败，提示用户");
+                                alert("无法调起支付宝APP，请确保已安装支付宝APP并重试，或使用其他支付方式。");
+                                document.removeEventListener('visibilitychange', visibilityHandler);
+                                window.removeEventListener('blur', blurHandler);
+                                payButton.style.display = "block";
+                                loading.style.display = "none";
+                            } else {
+                                console.log("APP已被调起");
+                            }
+                        }, 3000);
+                        
+                    } else {
+                        // 如果没有action URL，提示错误
+                        console.log("未找到action URL");
+                        alert("支付表单配置错误，请联系客服");
+                        payButton.style.display = "block";
+                        loading.style.display = "none";
+                    }
+                    
+            } catch (error) {
+                console.error("支付处理失败:", error);
+                alert("支付处理失败，请重试");
+                payButton.style.display = "block";
+                loading.style.display = "none";
+            }
+            <?php endif; ?>
+            <?php else: ?>
+            // 桌面端：直接提交表单
+            setTimeout(function() {
+                try {
+                    const form = document.forms["alipaysubmit"];
+                    if (form) {
+                        form.submit();
+                    } else {
+                        console.error("未找到支付表单");
+                        alert("支付表单不存在，请重新加载页面");
+                        payButton.style.display = "block";
+                        loading.style.display = "none";
+                    }
+                } catch (error) {
+                    console.error("支付表单提交失败:", error);
+                    alert("支付表单提交失败，请重试");
+                    payButton.style.display = "block";
+                    loading.style.display = "none";
+                }
+            }, 500);
+            <?php endif; ?>
+        }
+        
+        // 测试移动端检测
+        function testMobileDetection() {
+            const userAgent = navigator.userAgent;
+            const mobileKeywords = [
+                'Mobile', 'Android', 'iPhone', 'iPad', 'iPod', 
+                'BlackBerry', 'Windows Phone', 'Opera Mini',
+                'Safari', 'Chrome Mobile', 'Firefox Mobile'
+            ];
+            
+            let isMobile = false;
+            let matchedKeywords = [];
+            
+            for (let keyword of mobileKeywords) {
+                if (userAgent.toLowerCase().includes(keyword.toLowerCase())) {
+                    isMobile = true;
+                    matchedKeywords.push(keyword);
+                }
+            }
+            
+            const result = `
+                <div style="font-size: 14px;">
+                    <div><strong>User Agent:</strong> ${userAgent}</div>
+                    <div><strong>移动端检测:</strong> <span style="color: ${isMobile ? 'green' : 'red'}">${isMobile ? '✅ 是' : '❌ 否'}</span></div>
+                    <div><strong>匹配关键词:</strong> ${matchedKeywords.length > 0 ? matchedKeywords.join(', ') : '无'}</div>
+                    <div><strong>屏幕信息:</strong> ${window.screen.width}x${window.screen.height}</div>
+                    <div><strong>窗口信息:</strong> ${window.innerWidth}x${window.innerHeight}</div>
+                </div>
+            `;
+            
+            document.getElementById('testResult').innerHTML = result;
+            document.getElementById('testResult').style.display = 'block';
+        }
+        
+        
+        // 复制到剪贴板
+        function copyToClipboard(text) {
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(text).then(function() {
+                    alert('链接已复制到剪贴板');
+                });
+            } else {
+                // 备用方案
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                alert('链接已复制到剪贴板');
+            }
+        }
+        
+        
+        // 生成二维码（使用真实二维码API）
+        function generateQRCode() {
+            generateRealQRCode();
+        }
+        
+        // 倒计时功能
+        function startCountdown() {
+            const countdownElement = document.getElementById("countdown");
+            if (!countdownElement) {
+                console.error("倒计时元素未找到");
+                return;
+            }
+            
+            // 获取订单过期时间
+            const expireTime = <?=$expireTime?>; // 订单过期时间戳
+            const currentTime = Math.floor(Date.now() / 1000); // 当前时间戳
+            let timeLeft = Math.max(0, expireTime - currentTime); // 剩余时间（秒）
+            
+            console.log("订单过期时间:", new Date(expireTime * 1000).toLocaleString());
+            console.log("当前时间:", new Date(currentTime * 1000).toLocaleString());
+            console.log("剩余时间:", timeLeft, "秒");
+            
+            // 声明timer变量
+            let timer;
+            let expired = false; // 防止重复弹出过期提示
+            
+            function updateCountdown() {
+                const minutes = Math.floor(timeLeft / 60);
+                const seconds = timeLeft % 60;
+                
+                // 格式化时间显示
+                const timeString = minutes.toString().padStart(2, "0") + ":" + seconds.toString().padStart(2, "0");
+                
+                // 根据剩余时间设置样式
+                countdownElement.textContent = timeString;
+                countdownElement.className = "countdown";
+                
+                if (timeLeft <= 60) {
+                    // 最后1分钟，红色闪烁
+                    countdownElement.className = "countdown danger";
+                } else if (timeLeft <= 180) {
+                    // 最后3分钟，橙色警告
+                    countdownElement.className = "countdown warning";
+                }
+                
+                if (timeLeft <= 0) {
+                    // 时间到，订单过期
+                    countdownElement.textContent = "订单已过期";
+                    countdownElement.className = "countdown danger";
+                    
+                    // 移除二维码容器（如果存在）
+                    const qrCodeContainer = document.querySelector(".qr-code-container");
+                    if (qrCodeContainer) {
+                        qrCodeContainer.remove();
+                    }
+                    
+                    // 禁用支付按钮
+                    const payButton = document.getElementById("payButton");
+                    if (payButton) {
+                        payButton.disabled = true;
+                        payButton.textContent = "订单已过期";
+                        payButton.style.background = "#ccc";
+                        payButton.style.cursor = "not-allowed";
+                    }
+                    
+                    // 调用后端关闭接口（只调用一次）
+                    if (!expired) {
+                        expired = true;
+                        // 尝试通知后端关闭订单
+                        fetch(`/payment/close?order_number=${encodeURIComponent("<?=$orderNo?>")}`)
+                          .then(r => r.json()).then(res => {
+                            console.log('关闭结果:', res)
+                          }).catch(() => {})
+                          .finally(() => {
+                            alert("订单已过期，请重新创建订单");
+                          })
+                    }
+                    
+                    if (timer) {
+                        clearInterval(timer);
+                    }
+                    return;
+                }
+                
+                timeLeft--;
+            }
+            
+            // 立即更新一次
+            updateCountdown();
+            
+            // 每秒更新一次
+            timer = setInterval(updateCountdown, 1000);
+            
+            // 页面卸载时清除定时器
+            window.addEventListener("beforeunload", function() {
+                if (timer) {
+                    clearInterval(timer);
+                }
+            });
+            
+            console.log("倒计时已启动，剩余时间：", Math.floor(timeLeft / 60), "分", timeLeft % 60, "秒");
+        }
+        
+        // 页面加载完成后显示支付按钮，不自动提交
+        document.addEventListener("DOMContentLoaded", function() {
+            console.log("支付页面加载完成");
+            console.log("订单号:", "<?=$orderNo?>");
+            console.log("支付金额:", "¥<?=$amount?>");
+            console.log("请点击\"立即支付\"按钮完成支付");
+            
+            // 立即启动倒计时
+            startCountdown();
+            
+            // QRCode库会在DOMContentLoaded事件中自动加载
+        });
+    </script>
+</body>
+</html>

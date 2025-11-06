@@ -1,0 +1,6 @@
+ARG_ENABLE("xhprof", "xhprof support", "no");
+
+if (PHP_XHPROF == "yes") {
+	EXTENSION("xhprof", "xhprof.c", null, "/DZEND_ENABLE_STATIC_TSRMLS_CACHE=1");
+    AC_DEFINE("HAVE_PCRE", 1, "have pcre headers");
+}

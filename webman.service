@@ -1,0 +1,25 @@
+[Unit]
+Description=三方支付服务
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/www/api.gflzt.cn
+ExecStart=/usr/bin/php /www/api.gflzt.cn/start.php start
+ExecStop=/usr/bin/php /www/api.gflzt.cn/start.php stop
+ExecReload=/bin/kill -USR1 $MAINPID
+Restart=always
+RestartSec=3
+LimitNOFILE=100000
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=payment-service
+
+# 环境变量
+Environment=PHP_CLI_SERVER_WORKERS=4
+Environment=WEBMAN_ENV=production
+
+[Install]
+WantedBy=multi-user.target

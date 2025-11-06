@@ -1,0 +1,785 @@
+<?php
+
+namespace app\controller;
+
+use support\Request;
+use support\Response;
+use app\model\Order;
+use app\model\Subject;
+use app\model\Product;
+use app\service\payment\PaymentFactory;
+use support\Log;
+
+/**
+ * 支付页面控制器
+ */
+class PaymentPageController
+{
+    /**
+     * H5支付页面
+     * @param Request $request
+     * @return Response
+     */
+    public function payment(Request $request): Response
+    {
+        $orderNumber = $request->get('order_number', '');
+        
+        // 验证订单号参数
+        if (empty($orderNumber)) {
+            return $this->error('订单号不能为空');
+        }
+        
+        try {
+            // 根据订单号查询订单
+            $order = Order::where('platform_order_no', $orderNumber)->first();
+            if (!$order) {
+                return $this->error('订单不存在');
+            }
+            
+            // 检查订单状态
+            if ($order->pay_status != Order::PAY_STATUS_UNPAID) {
+                return $this->error('订单状态异常，无法支付');
+            }
+            
+            // 查询支付主体
+            $subject = Subject::where('id', $order->subject_id)
+                ->where('status', Subject::STATUS_ENABLED)
+                ->first();
+            if (!$subject) {
+                return $this->error('支付主体不存在或已禁用');
+            }
+            
+            // 查询产品信息
+            $product = Product::with('paymentType')
+                ->where('id', $order->product_id)
+                ->where('status', Product::STATUS_ENABLED)
+                ->first();
+            if (!$product) {
+                return $this->error('产品不存在或已禁用');
+            }
+            
+            // 构建订单信息
+            $orderInfo = [
+                'platform_order_no' => $order->platform_order_no,
+                'merchant_order_no' => $order->merchant_order_no,
+                'subject' => $order->subject,
+                'body' => $order->body ?? $order->subject,
+                'amount' => $order->order_amount,
+                'expire_time' => $order->expire_time,
+                'alipay_pid' => $subject->alipay_pid,
+                'client_ip' => $order->client_ip,
+                'notify_url' => $order->notify_url,
+                'return_url' => $order->return_url,
+            ];
+            
+            // 记录支付页面访问日志
+            Log::info('用户访问支付页面', [
+                'order_number' => $orderNumber,
+                'product_code' => $product->paymentType->product_code ?? 'unknown',
+                'amount' => $order->order_amount
+            ]);
+            
+            // 通过支付工厂创建支付
+            $paymentResult = PaymentFactory::createPayment(
+                $product->product_code,
+                $orderInfo,
+                $order->agent_id
+            );
+            
+            // 获取支付表单内容
+            $paymentForm = $paymentResult['payment_url'] ?? '';
+            
+            // 检查是否是沙箱环境502错误
+            if (empty($paymentForm) || strpos($paymentForm, '502') !== false) {
+                Log::warning('支付宝沙箱环境可能不可用，使用模拟支付页面', [
+                    'order_number' => $orderNumber,
+                    'payment_form' => $paymentForm
+                ]);
+                
+                // 创建模拟支付页面
+                $paymentPageHtml = $this->createMockPaymentPage($order);
+                return response($paymentPageHtml, 200, ['Content-Type' => 'text/html; charset=utf-8']);
+            }
+            
+            // 记录支付表单生成成功
+            Log::info('支付表单生成成功', [
+                'order_number' => $orderNumber,
+                'payment_method' => $paymentResult['payment_method'] ?? 'unknown'
+            ]);
+            
+            // 创建友好的支付页面
+            $paymentPageHtml = $this->createPaymentPage($order, $paymentForm);
+            return response($paymentPageHtml, 200, ['Content-Type' => 'text/html; charset=utf-8']);
+            
+        } catch (\Exception $e) {
+            Log::error('支付页面异常', [
+                'order_number' => $orderNumber,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return $this->error('系统异常，请稍后重试');
+        }
+    }
+    
+    /**
+     * 错误页面
+     * @param string $message
+     * @return Response
+     */
+    private function error(string $message): Response
+    {
+        $errorHtml = '<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>支付错误</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .error-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            padding: 40px;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+        .error-icon {
+            font-size: 48px;
+            color: #ff4757;
+            margin-bottom: 20px;
+        }
+        .error-title {
+            font-size: 24px;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .error-message {
+            color: #666;
+            font-size: 16px;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="error-container">
+        <div class="error-icon">⚠️</div>
+        <div class="error-title">支付失败</div>
+        <div class="error-message">' . htmlspecialchars($message) . '</div>
+    </div>
+</body>
+</html>';
+        
+        return response($errorHtml, 400, ['Content-Type' => 'text/html; charset=utf-8']);
+    }
+    
+    /**
+     * 移除支付表单中的自动提交script
+     * @param string $paymentForm 支付表单HTML
+     * @return string 处理后的表单HTML
+     */
+    private function removeAutoSubmitScript(string $paymentForm): string
+    {
+        // 移除自动提交的script标签
+        $paymentForm = preg_replace('/<script[^>]*>.*?document\.forms\[.*?\]\.submit\(\).*?<\/script>/is', '', $paymentForm);
+        
+        // 移除其他可能的自动提交script
+        $paymentForm = preg_replace('/<script[^>]*>.*?submit\(\).*?<\/script>/is', '', $paymentForm);
+        
+        return $paymentForm;
+    }
+    
+    /**
+     * 创建模拟支付页面（用于沙箱环境不可用时）
+     * @param Order $order 订单信息
+     * @return string HTML内容
+     */
+    private function createMockPaymentPage($order): string
+    {
+        $orderNo = $order->platform_order_no;
+        $amount = number_format($order->order_amount, 2, '.', '');
+        $subject = is_string($order->subject) ? $order->subject : '商品支付';
+        
+        return '<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>模拟支付 - ' . htmlspecialchars($subject) . '</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .payment-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            padding: 30px;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+        .logo {
+            width: 60px;
+            height: 60px;
+            background: #ff6b6b;
+            border-radius: 50%;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .title {
+            font-size: 24px;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 30px;
+        }
+        .order-info {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            text-align: left;
+        }
+        .order-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        .order-item:last-child {
+            margin-bottom: 0;
+            font-weight: bold;
+            font-size: 16px;
+            color: #ff6b6b;
+            border-top: 1px solid #e0e0e0;
+            padding-top: 10px;
+        }
+        .mock-button {
+            background: #ff6b6b;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 15px 40px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+        }
+        .mock-button:hover {
+            background: #ff5252;
+            transform: translateY(-2px);
+        }
+        .mock-button:active {
+            transform: translateY(0);
+        }
+        .status-info {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 20px;
+            font-size: 14px;
+            color: #856404;
+        }
+        .status-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        .debug-info {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 20px;
+            font-size: 12px;
+            color: #666;
+            text-align: left;
+        }
+        .debug-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        .debug-item {
+            margin-bottom: 5px;
+        }
+        .debug-item:last-child {
+            margin-bottom: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="payment-container">
+        <div class="logo">⚠️</div>
+        <div class="title">模拟支付页面</div>
+        <div class="subtitle">支付宝沙箱环境暂时不可用，使用模拟支付进行测试</div>
+        
+        <div class="order-info">
+            <div class="order-item">
+                <span>商品名称：</span>
+                <span>' . htmlspecialchars($subject) . '</span>
+            </div>
+            <div class="order-item">
+                <span>订单号：</span>
+                <span>' . htmlspecialchars($orderNo) . '</span>
+            </div>
+            <div class="order-item">
+                <span>支付金额：</span>
+                <span>¥' . $amount . '</span>
+            </div>
+        </div>
+        
+        <button class="mock-button" onclick="simulatePayment()">
+            模拟支付成功
+        </button>
+        
+        <div class="status-info">
+            <div class="status-title">⚠️ 注意</div>
+            <div>当前使用模拟支付页面，因为支付宝沙箱环境返回502错误。</div>
+            <div>点击"模拟支付成功"按钮将模拟支付完成流程。</div>
+        </div>
+        
+        <div class="debug-info">
+            <div class="debug-title">调试信息</div>
+            <div class="debug-item">状态：支付宝沙箱环境502错误</div>
+            <div class="debug-item">网关：openapi.alipaydev.com (不可用)</div>
+            <div class="debug-item">AppID：9021000157613900</div>
+            <div class="debug-item">支付方式：模拟支付</div>
+        </div>
+    </div>
+
+    <script>
+        function simulatePayment() {
+            alert("模拟支付成功！\\n\\n订单号: ' . $orderNo . '\\n金额: ¥' . $amount . '\\n\\n在实际环境中，这里会跳转到支付宝完成支付。");
+            
+            // 模拟支付成功后的跳转
+            setTimeout(function() {
+                if (confirm("是否跳转到支付成功页面？")) {
+                    window.location.href = "/payment/success?order_no=' . $orderNo . '";
+                }
+            }, 1000);
+        }
+        
+        // 页面加载完成后的提示
+        document.addEventListener("DOMContentLoaded", function() {
+            console.log("模拟支付页面加载完成");
+            console.log("订单号:", "' . $orderNo . '");
+            console.log("支付金额:", "¥' . $amount . '");
+            console.log("注意：这是模拟支付页面，因为支付宝沙箱环境不可用");
+        });
+    </script>
+</body>
+</html>';
+    }
+    
+    /**
+     * 创建支付页面
+     * @param Order $order 订单信息
+     * @param string $paymentForm 支付表单
+     * @return string HTML内容
+     */
+    private function createPaymentPage($order, $paymentForm): string
+    {
+        $orderNo = $order->platform_order_no;
+        $amount = number_format($order->order_amount, 2, '.', '');
+        $subject = is_string($order->subject) ? $order->subject : '商品支付';
+        $expireTime = strtotime($order->expire_time); // 获取过期时间戳
+        
+        return '<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>订单支付 - ' . htmlspecialchars($subject) . '</title>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .payment-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            padding: 30px;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+        .logo {
+            width: 60px;
+            height: 60px;
+            background: #1677ff;
+            border-radius: 50%;
+            margin: 0 auto 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .title {
+            font-size: 24px;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 30px;
+        }
+        .order-info {
+            background: #f5f5f5;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+            text-align: left;
+        }
+        .order-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        .order-item:last-child {
+            margin-bottom: 0;
+            font-weight: bold;
+            font-size: 16px;
+            color: #1677ff;
+            border-top: 1px solid #e0e0e0;
+            padding-top: 10px;
+        }
+        .pay-button {
+            background: #1677ff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 15px 40px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+            width: 100%;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+        }
+        .pay-button:hover {
+            background: #4096ff;
+            transform: translateY(-2px);
+        }
+        .pay-button:active {
+            transform: translateY(0);
+        }
+        .loading {
+            display: none;
+            margin-top: 20px;
+        }
+        .loading-text {
+            color: #666;
+            font-size: 14px;
+        }
+        .spinner {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #1677ff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .debug-info {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 6px;
+            padding: 15px;
+            margin-top: 20px;
+            font-size: 12px;
+            color: #666;
+            text-align: left;
+        }
+        .debug-title {
+            font-weight: bold;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        .debug-item {
+            margin-bottom: 5px;
+        }
+        .debug-item:last-child {
+            margin-bottom: 0;
+        }
+        .qr-code-container {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        .qr-code-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px;
+        }
+        .qr-code {
+            width: 200px;
+            height: 200px;
+            margin: 0 auto 15px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .qr-code-text {
+            font-size: 14px;
+            color: #666;
+        }
+        .countdown-item {
+            border-top: 1px solid #e0e0e0;
+            padding-top: 10px;
+            margin-top: 10px;
+        }
+        .countdown {
+            font-weight: bold;
+            color: #ff6b6b;
+            font-size: 16px;
+        }
+        .countdown.warning {
+            color: #ff9500;
+        }
+        .countdown.danger {
+            color: #ff3b30;
+            animation: blink 1s infinite;
+        }
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
+    </style>
+</head>
+<body>
+    <div class="payment-container">
+        <div class="logo">支</div>
+        <div class="title">订单支付</div>
+        <div class="subtitle">请确认订单信息后完成支付</div>
+        
+        <div class="order-info">
+            <div class="order-item">
+                <span>订单号：</span>
+                <span>' . htmlspecialchars($orderNo) . '</span>
+            </div>
+            <div class="order-item">
+                <span>支付金额：</span>
+                <span>¥' . $amount . '</span>
+            </div>
+            <div class="order-item countdown-item">
+                <span>剩余时间：</span>
+                <span id="countdown" class="countdown">计算中...</span>
+            </div>
+        </div>
+        
+        <div class="qr-code-container">
+            <div class="qr-code-title">扫码支付</div>
+            <div class="qr-code" id="qrCode"></div>
+            <div class="qr-code-text">请使用支付宝扫描二维码完成支付</div>
+        </div>
+        
+        <button id="payButton" class="pay-button" onclick="submitPayment()">
+            立即支付
+        </button>
+        
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <div class="loading-text">正在跳转到支付宝...</div>
+        </div>
+        
+        
+        <!-- 隐藏的支付表单 -->
+        ' . $this->removeAutoSubmitScript($paymentForm) . '
+    </div>
+
+    <script>
+        function submitPayment() {
+            const payButton = document.getElementById("payButton");
+            const loading = document.getElementById("loading");
+            
+            // 显示加载状态
+            payButton.style.display = "none";
+            loading.style.display = "block";
+            
+            // 延迟提交表单，让用户看到加载状态
+            setTimeout(function() {
+                try {
+                    // 提交支付宝表单
+                    document.forms["alipaysubmit"].submit();
+                } catch (error) {
+                    console.error("支付表单提交失败:", error);
+                    alert("支付表单提交失败，请重试");
+                    payButton.style.display = "block";
+                    loading.style.display = "none";
+                }
+            }, 1000);
+        }
+        
+        // 生成二维码
+        function generateQRCode() {
+            const qrCodeElement = document.getElementById("qrCode");
+            const qrCodeUrl = "http://baidu.com";
+            
+            // 清空容器
+            qrCodeElement.innerHTML = "";
+            
+            // 生成二维码
+            QRCode.toCanvas(qrCodeElement, qrCodeUrl, {
+                width: 180,
+                height: 180,
+                margin: 2,
+                color: {
+                    dark: "#000000",
+                    light: "#FFFFFF"
+                }
+            }, function (error) {
+                if (error) {
+                    console.error("二维码生成失败:", error);
+                    qrCodeElement.innerHTML = "<div style=\"color: #999; font-size: 14px;\">二维码生成失败</div>";
+                } else {
+                    console.log("二维码生成成功");
+                }
+            });
+        }
+        
+        // 倒计时功能
+        function startCountdown() {
+            const countdownElement = document.getElementById("countdown");
+            if (!countdownElement) {
+                console.error("倒计时元素未找到");
+                return;
+            }
+            
+            // 获取订单过期时间
+            const expireTime = ' . $expireTime . '; // 订单过期时间戳
+            const currentTime = Math.floor(Date.now() / 1000); // 当前时间戳
+            let timeLeft = Math.max(0, expireTime - currentTime); // 剩余时间（秒）
+            
+            console.log("订单过期时间:", new Date(expireTime * 1000).toLocaleString());
+            console.log("当前时间:", new Date(currentTime * 1000).toLocaleString());
+            console.log("剩余时间:", timeLeft, "秒");
+            
+            function updateCountdown() {
+                const minutes = Math.floor(timeLeft / 60);
+                const seconds = timeLeft % 60;
+                
+                // 格式化时间显示
+                const timeString = minutes.toString().padStart(2, '0') + ':' + seconds.toString().padStart(2, '0');
+                
+                // 根据剩余时间设置样式
+                countdownElement.textContent = timeString;
+                countdownElement.className = 'countdown';
+                
+                if (timeLeft <= 60) {
+                    // 最后1分钟，红色闪烁
+                    countdownElement.className = 'countdown danger';
+                } else if (timeLeft <= 180) {
+                    // 最后3分钟，橙色警告
+                    countdownElement.className = 'countdown warning';
+                }
+                
+                if (timeLeft <= 0) {
+                    // 时间到，订单过期
+                    countdownElement.textContent = "订单已过期";
+                    countdownElement.className = 'countdown danger';
+                    
+                    // 禁用支付按钮
+                    const payButton = document.getElementById("payButton");
+                    if (payButton) {
+                        payButton.disabled = true;
+                        payButton.textContent = "订单已过期";
+                        payButton.style.background = "#ccc";
+                        payButton.style.cursor = "not-allowed";
+                    }
+                    
+                    // 显示过期提示
+                    alert("订单已过期，请重新创建订单");
+                    clearInterval(timer);
+                    return;
+                }
+                
+                timeLeft--;
+            }
+            
+            // 立即更新一次
+            updateCountdown();
+            
+            // 每秒更新一次
+            const timer = setInterval(updateCountdown, 1000);
+            
+            // 页面卸载时清除定时器
+            window.addEventListener('beforeunload', function() {
+                clearInterval(timer);
+            });
+            
+            console.log("倒计时已启动，剩余时间：", Math.floor(timeLeft / 60), "分", timeLeft % 60, "秒");
+        }
+        
+        // 页面加载完成后显示支付按钮，不自动提交
+        document.addEventListener("DOMContentLoaded", function() {
+            console.log("支付页面加载完成");
+            console.log("订单号:", "' . $orderNo . '");
+            console.log("支付金额:", "¥' . $amount . '");
+            console.log("请点击"立即支付"按钮完成支付");
+            
+            // 生成二维码
+            generateQRCode();
+            
+            // 延迟启动倒计时，确保DOM完全加载
+            setTimeout(function() {
+                startCountdown();
+            }, 100);
+        });
+    </script>
+</body>
+</html>';
+    }
+}

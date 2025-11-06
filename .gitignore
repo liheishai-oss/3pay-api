@@ -1,0 +1,28 @@
+# Test files
+test_*.php
+
+# SQL migration files
+*.sql
+database_migrations/*.sql
+
+# Runtime and cache
+runtime/
+vendor/
+.idea/
+.vscode/
+
+# Environment files
+.env
+.env.local
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Certificates
+*.pem
+*.crt
+
