@@ -7,7 +7,6 @@ database_migrations/*.sql
 
 # Runtime and cache
 runtime/
-vendor/
 .idea/
 .vscode/
 
