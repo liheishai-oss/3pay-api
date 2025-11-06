@@ -17,6 +17,7 @@ runtime/
 
 # Database configuration (contains sensitive info)
 config/database.php
+config/redis.php
 
 # Logs
 *.log
