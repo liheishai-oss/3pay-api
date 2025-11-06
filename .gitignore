@@ -13,6 +13,10 @@ runtime/
 # Environment files
 .env
 .env.local
+.env.*
+
+# Database configuration (contains sensitive info)
+config/database.php
 
 # Logs
 *.log
