@@ -4,6 +4,8 @@ namespace app\admin\controller\v1;
 
 use app\model\Merchant;
 use app\model\Agent;
+use app\model\Admin;
+use app\exception\MyBusinessException;
 use support\Request;
 use support\Db;
 use support\Redis;
@@ -17,14 +19,24 @@ class MerchantController
     public function index(Request $request)
     {
         $userData = $request->userData;
+
         $isAgent = ($userData['user_group_id'] ?? 0) == 3;
         
         $page = $request->get('page', 1);
-        $limit = $request->get('limit', 20);
-        $merchantName = $request->get('merchant_name', '');
-        $status = $request->get('status', '');
-        $agentId = $request->get('agent_id', '');
-
+        $limit = $request->get('page_size', $request->get('limit', 20));
+        
+        // 支持search参数（JSON格式）
+        $searchJson = $request->get('search', '');
+        $searchParams = [];
+        if ($searchJson) {
+            $searchParams = json_decode($searchJson, true) ?: [];
+        }
+        
+        // 优先从search参数中获取，否则从直接参数获取
+        $merchantName = $searchParams['merchant_name'] ?? $request->get('merchant_name', '');
+        $status = $searchParams['status'] ?? $request->get('status', '');
+        $agentId = $searchParams['agent_id'] ?? $request->get('agent_id', '');
+        
         $query = Merchant::with(['agent']);
 
         // 代理商只能看自己的数据
@@ -50,10 +62,11 @@ class MerchantController
             ->toArray();
 
         return success([
-            'list' => $list,
+            'data' => $list,
             'total' => $total,
-            'page' => (int)$page,
-            'limit' => (int)$limit
+            'current_page' => (int)$page,
+            'per_page' => (int)$limit,
+            'admin' => false
         ]);
     }
 
@@ -89,6 +102,13 @@ class MerchantController
         $userData = $request->userData;
         $isAgent = ($userData['user_group_id'] ?? 0) == 3;
         
+        // 调试信息
+        Log::info('创建商户 - 用户信息', [
+            'userData' => $userData,
+            'isAgent' => $isAgent,
+            'agent_id' => $userData['agent_id'] ?? 'null'
+        ]);
+        
         $param = $request->post();
         $id = $param['id'] ?? 0;
 
@@ -97,14 +117,63 @@ class MerchantController
             return error('请输入商户名称');
         }
 
-        // 代理商自动使用自己的agent_id
+        // 新增时验证账号
+        if ($id == 0) {
+            if (empty($param['username'])) {
+                return error('请输入账号');
+            }
+            
+            // 验证账号格式（只能包含字母、数字和下划线）
+            if (!preg_match('/^[a-zA-Z0-9_]+$/', $param['username'])) {
+                return error('账号只能包含字母、数字和下划线');
+            }
+            
+            // 验证账号长度
+            if (strlen($param['username']) < 3 || strlen($param['username']) > 50) {
+                return error('账号长度必须在3到50个字符之间');
+            }
+            
+            // 检查用户名是否已存在
+            if (Admin::where('username', $param['username'])->exists()) {
+                return error('账号已存在，请使用其他账号');
+            }
+        }
+
+        // 处理 agent_id：从 userData（登录信息）中获取，而不是依赖前端传递
+        // userData 由中间件 Auth 注入，每次请求都会包含完整的用户信息
         if ($isAgent) {
-            $param['agent_id'] = $userData['agent_id'];
+            // 代理商：从 userData 中获取自己的 agent_id（中间件已注入）
+            // 完全忽略前端传递的 agent_id，确保安全性
+            $agentId = $userData['agent_id'] ?? null;
+            
+            // 如果 userData 中没有 agent_id，尝试从数据库查询
+            if (empty($agentId)) {
+                $agent = Agent::where('admin_id', $userData['admin_id'])->first();
+                if ($agent) {
+                    $agentId = $agent->id;
+                    Log::info('从数据库查询到 agent_id', ['admin_id' => $userData['admin_id'], 'agent_id' => $agentId]);
+                }
+            }
+            
+            if (empty($agentId)) {
+                Log::error('无法获取代理商ID', [
+                    'userData' => $userData,
+                    'admin_id' => $userData['admin_id'] ?? 'null'
+                ]);
+                return error('代理商信息错误，无法从登录信息中获取代理商ID，请检查代理商账号配置');
+            }
+            $param['agent_id'] = (int)$agentId;
         } else {
-            // 管理员必须选择代理商
+            // 管理员：必须从表单中选择代理商
             if (empty($param['agent_id'])) {
                 return error('请选择代理商');
             }
+            $param['agent_id'] = (int)$param['agent_id'];
+        }
+
+        // 最终验证 agent_id 是否存在且有效
+        if (empty($param['agent_id']) || $param['agent_id'] <= 0) {
+            return error('代理商ID无效');
         }
 
         try {
@@ -127,13 +196,20 @@ class MerchantController
                 }
 
                 $merchant->merchant_name = $param['merchant_name'];
-                $merchant->contact_email = $param['contact_email'] ?? null;
-                $merchant->notify_url = $param['notify_url'] ?? null;
-                $merchant->return_url = $param['return_url'] ?? null;
                 $merchant->ip_whitelist = $param['ip_whitelist'] ?? null;
                 $merchant->status = $param['status'] ?? 1;
                 $merchant->remark = $param['remark'] ?? null;
                 $merchant->save();
+
+                // 同步更新关联的admin账号状态和昵称
+                if ($merchant->admin_id) {
+                    $admin = Admin::find($merchant->admin_id);
+                    if ($admin) {
+                        $admin->nickname = $param['merchant_name'];
+                        $admin->status = $param['status'] ?? 1;
+                        $admin->save();
+                    }
+                }
 
                 Db::commit();
                 return success([], '编辑成功');
@@ -142,14 +218,27 @@ class MerchantController
                 $apiKey = Merchant::generateApiKey();
                 $apiSecret = Merchant::generateApiSecret();
 
+                // 使用前端传入的账号
+                $username = $param['username'];
+
+                // 创建admin管理员账号，归属于商户管理组（group_id=4）
+                $admin = new Admin();
+                $admin->username = $username;
+                $admin->nickname = $param['merchant_name']; // 商户名称作为昵称
+                $admin->password = password_hash('123456', PASSWORD_DEFAULT); // 默认密码123456
+                $admin->group_id = 4; // 商户管理组
+                $admin->status = $param['status'] ?? 1;
+                $admin->is_first_login = 1; // 首次登录需要修改密码
+                $admin->save();
+
+                // 创建商户，关联admin_id和username
                 Merchant::create([
                     'agent_id' => $param['agent_id'],
+                    'admin_id' => $admin->id,
+                    'username' => $username,
                     'merchant_name' => $param['merchant_name'],
-                    'contact_email' => $param['contact_email'] ?? null,
                     'api_key' => $apiKey,
                     'api_secret' => $apiSecret,
-                    'notify_url' => $param['notify_url'] ?? null,
-                    'return_url' => $param['return_url'] ?? null,
                     'ip_whitelist' => $param['ip_whitelist'] ?? null,
                     'status' => $param['status'] ?? 1,
                     'remark' => $param['remark'] ?? null,
@@ -158,8 +247,9 @@ class MerchantController
                 Db::commit();
                 return success([
                     'api_key' => $apiKey,
-                    'api_secret' => $apiSecret
-                ], '添加成功，请妥善保管API密钥信息');
+                    'api_secret' => $apiSecret,
+                    'username' => $username
+                ], '添加成功，请妥善保管API密钥信息。商户账号：' . $username . '，默认密码：123456，首次登录需修改密码');
             }
         } catch (\Exception $e) {
             Db::rollBack();
@@ -194,9 +284,26 @@ class MerchantController
             return error('商户不存在或无权限操作');
         }
 
-        $merchant->delete();
+        try {
+            Db::beginTransaction();
 
-        return success([], '删除成功');
+            // 删除关联的admin账号
+            if ($merchant->admin_id) {
+                $admin = Admin::find($merchant->admin_id);
+                if ($admin) {
+                    $admin->delete();
+                }
+            }
+
+            // 删除商户
+            $merchant->delete();
+
+            Db::commit();
+            return success([], '删除成功');
+        } catch (\Exception $e) {
+            Db::rollBack();
+            return error('删除失败：' . $e->getMessage());
+        }
     }
 
     /**
@@ -229,6 +336,15 @@ class MerchantController
 
         $merchant->status = $status;
         $merchant->save();
+
+        // 同步更新关联的admin账号状态
+        if ($merchant->admin_id) {
+            $admin = Admin::find($merchant->admin_id);
+            if ($admin) {
+                $admin->status = $status;
+                $admin->save();
+            }
+        }
 
         return success([], '操作成功');
     }

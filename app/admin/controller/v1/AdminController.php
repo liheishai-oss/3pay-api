@@ -95,14 +95,15 @@ class AdminController
             $baseQuery = AdminRule::where([
                 'is_menu' => 1,
                 'status'  => 1
-            ])->select(['id', 'title', 'icon', 'path', 'parent_id']);
+            ])->select(['id', 'title', 'icon', 'path', 'parent_id', 'weight']);
             
             if ($userId == Common::ADMIN_USER_ID) {
                 Log::info('超级管理员，获取所有菜单');
             } else {
                 // 所有非超级管理员（包括商户管理员）都根据用户组权限获取菜单
                 Log::info('根据用户组权限获取菜单', [
-                    'user_type' => $isMerchantAdmin ? 'merchant_admin' : 'normal_admin'
+                    'user_type' => $isMerchantAdmin ? 'merchant_admin' : 'normal_admin',
+                    'group_id' => $groupId
                 ]);
                 
                 // 获取分组权限id
@@ -111,21 +112,52 @@ class AdminController
 
                 Log::info('用户组权限ID', [
                     'group_id' => $groupId,
-                    'rule_ids' => $ruleIds
+                    'rule_ids' => $ruleIds,
+                    'rule_ids_count' => count($ruleIds)
                 ]);
+
+                // 如果没有权限，返回空数组
+                if (empty($ruleIds)) {
+                    Log::warning('用户组没有分配任何权限', [
+                        'group_id' => $groupId,
+                        'user_id' => $userId
+                    ]);
+                    return success([]);
+                }
 
                 // 获取这些权限的所有父级（包括多级）
                 $allRuleIds = $this->getRuleWithParents($ruleIds);
 
                 Log::info('包含父级的权限ID', [
                     'original_rule_ids' => $ruleIds,
-                    'all_rule_ids' => $allRuleIds
+                    'all_rule_ids' => $allRuleIds,
+                    'all_rule_ids_count' => count($allRuleIds)
                 ]);
+
+                // 如果获取父级后仍然为空，返回空数组
+                if (empty($allRuleIds)) {
+                    Log::warning('获取父级权限后仍然为空', [
+                        'group_id' => $groupId,
+                        'original_rule_ids' => $ruleIds
+                    ]);
+                    return success([]);
+                }
 
                 $baseQuery->whereIn('id', $allRuleIds);
             }
 
             $menus = $baseQuery->orderBy('weight', 'desc')->get()->toArray();
+            
+            // 确保菜单数据的 parent_id 和 id 是整数类型，并确保必要字段存在
+            foreach ($menus as &$menu) {
+                $menu['id'] = (int)($menu['id'] ?? 0);
+                $menu['parent_id'] = (int)($menu['parent_id'] ?? 0);
+                // 确保必要字段存在
+                $menu['title'] = $menu['title'] ?? '';
+                $menu['path'] = $menu['path'] ?? '';
+                $menu['icon'] = $menu['icon'] ?? '';
+            }
+            unset($menu);
             
             Log::info('查询到的菜单数据', [
                 'menus_count' => count($menus),
@@ -138,6 +170,15 @@ class AdminController
                 'tree_count' => count($tree),
                 'tree' => $tree
             ]);
+
+            // 最终返回前再次检查数据格式
+            if (empty($tree)) {
+                Log::warning('菜单树为空，可能的原因：', [
+                    'group_id' => $groupId,
+                    'menus_count' => count($menus),
+                    'menus' => $menus
+                ]);
+            }
 
             return success($tree);
     }
@@ -170,11 +211,15 @@ private function getRuleWithParents(array $ruleIds): array
     {
         $tree = [];
         foreach ($menus as $menu) {
-            if ($menu['parent_id'] == $parentId) {
-                $children = $this->buildMenuTree($menus, $menu['id']);
+            // 确保 parent_id 和 id 都是整数类型进行比较
+            $menuParentId = (int)($menu['parent_id'] ?? 0);
+            $menuId = (int)($menu['id'] ?? 0);
+            
+            if ($menuParentId == $parentId) {
+                $children = $this->buildMenuTree($menus, $menuId);
                 if (!empty($children)) {
                     $menu['children'] = $children;
-                }else{
+                } else {
                     $menu['children'] = [];
                 }
                 $tree[] = $menu;
