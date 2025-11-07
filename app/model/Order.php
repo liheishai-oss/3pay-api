@@ -24,11 +24,13 @@ use support\Model;
  * @property string $client_ip 客户端IP
  * @property string $first_open_ip 首次打开支付页面的IP
  * @property string $first_open_time 首次打开支付页面的时间
+ * @property string $pay_ip 支付时IP地址
  * @property string $pay_time 支付时间
  * @property string $notify_time 通知时间
  * @property string $close_time 关闭时间
  * @property string $expire_time 过期时间
  * @property string $remark 备注
+ * @property string $buyer_id 购买者UUID
  * @property string $created_at 创建时间
  * @property string $updated_at 更新时间
  */
@@ -57,11 +59,13 @@ class Order extends Model
         'client_ip',
         'first_open_ip',
         'first_open_time',
+        'pay_ip',
         'pay_time',
         'notify_time',
         'close_time',
         'expire_time',
-        'remark'
+        'remark',
+        'buyer_id'
     ];
 
     protected $casts = [
@@ -84,10 +88,11 @@ class Order extends Model
     ];
 
     // 支付状态常量
-    const PAY_STATUS_UNPAID = 0;    // 待支付
+    const PAY_STATUS_CREATED = 0;    // 已创建，待打开
     const PAY_STATUS_PAID = 1;      // 已支付
     const PAY_STATUS_CLOSED = 2;    // 已关闭
     const PAY_STATUS_REFUNDED = 3;  // 已退款
+    const PAY_STATUS_OPENED = 4;    // 已打开（用户已访问支付页面，待支付）
 
     // 通知状态常量
     const NOTIFY_STATUS_PENDING = 0;  // 未通知
@@ -192,10 +197,11 @@ class Order extends Model
     public function getPayStatusTextAttribute()
     {
         $statusTexts = [
-            self::PAY_STATUS_UNPAID => '待支付',
+            self::PAY_STATUS_CREATED => '已创建',
             self::PAY_STATUS_PAID => '已支付',
             self::PAY_STATUS_CLOSED => '已关闭',
             self::PAY_STATUS_REFUNDED => '已退款',
+            self::PAY_STATUS_OPENED => '已打开',
         ];
         return $statusTexts[$this->pay_status] ?? '未知';
     }

@@ -258,45 +258,48 @@ class MerchantController
     }
 
     /**
-     * 删除商户
+     * 删除商户（支持批量删除）
      */
     public function destroy(Request $request)
     {
         $userData = $request->userData;
         $isAgent = ($userData['user_group_id'] ?? 0) == 3;
         
-        $id = $request->post('id');
+        $ids = $request->post('ids');
 
-        if (!$id) {
-            return error('参数错误');
+        if (empty($ids) || !is_array($ids)) {
+            return error('参数错误，缺少要删除的ID列表');
         }
 
-        $query = Merchant::where('id', $id);
+        $query = Merchant::whereIn('id', $ids);
         
         // 代理商只能删除自己的数据
         if ($isAgent) {
             $query->where('agent_id', $userData['agent_id']);
         }
         
-        $merchant = $query->first();
+        $merchants = $query->get();
 
-        if (!$merchant) {
+        if ($merchants->isEmpty()) {
             return error('商户不存在或无权限操作');
         }
+
+        // 获取实际可以删除的商户ID（权限过滤后的）
+        $validIds = $merchants->pluck('id')->toArray();
 
         try {
             Db::beginTransaction();
 
+            // 收集所有关联的admin_id
+            $adminIds = $merchants->pluck('admin_id')->filter()->toArray();
+
             // 删除关联的admin账号
-            if ($merchant->admin_id) {
-                $admin = Admin::find($merchant->admin_id);
-                if ($admin) {
-                    $admin->delete();
-                }
+            if (!empty($adminIds)) {
+                Admin::whereIn('id', $adminIds)->delete();
             }
 
-            // 删除商户
-            $merchant->delete();
+            // 删除商户（只删除有权限的）
+            Merchant::whereIn('id', $validIds)->delete();
 
             Db::commit();
             return success([], '删除成功');
@@ -315,9 +318,8 @@ class MerchantController
         $isAgent = ($userData['user_group_id'] ?? 0) == 3;
         
         $id = $request->post('id');
-        $status = $request->post('status');
 
-        if (!$id || !isset($status)) {
+        if (!$id) {
             return error('参数错误');
         }
 
@@ -334,19 +336,21 @@ class MerchantController
             return error('商户不存在或无权限操作');
         }
 
-        $merchant->status = $status;
+        // 自动切换状态：1变0，0变1
+        $newStatus = $merchant->status == 1 ? 0 : 1;
+        $merchant->status = $newStatus;
         $merchant->save();
 
         // 同步更新关联的admin账号状态
         if ($merchant->admin_id) {
             $admin = Admin::find($merchant->admin_id);
             if ($admin) {
-                $admin->status = $status;
+                $admin->status = $newStatus;
                 $admin->save();
             }
         }
 
-        return success([], '操作成功');
+        return success(['status' => $newStatus], '操作成功');
     }
 
     /**

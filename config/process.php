@@ -95,5 +95,12 @@ return [
         'handler' => app\process\OrderAutoRoyalty::class,
         'reloadable' => true,
         'count' => 1,
+    ],
+
+    // 订单未拉起自动关闭任务（每5分钟扫描一次超过1小时未拉起的订单并关闭）
+    'order-unopened-close' => [
+        'handler' => app\process\OrderUnopenedClose::class,
+        'reloadable' => true,
+        'count' => 1,
     ]
 ];

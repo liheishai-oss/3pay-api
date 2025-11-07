@@ -170,6 +170,43 @@ class PaymentPageController
                     return $this->showDeviceVerificationPage($buyerId, $lastOrderIp, $deviceCode, $orderNumber, $order);
                 }
                 
+                // 检查订单是否过期（在生成支付前）
+                $isExpired = $order->expire_time && strtotime($order->expire_time) < time();
+                if ($isExpired) {
+                    Log::warning('订单已过期，拒绝生成支付', [
+                        'order_number' => $orderNumber,
+                        'expire_time' => $order->expire_time,
+                        'current_time' => date('Y-m-d H:i:s')
+                    ]);
+                    
+                    // 如果订单还未关闭，先关闭订单
+                    if ($order->pay_status == Order::PAY_STATUS_CREATED || $order->pay_status == Order::PAY_STATUS_OPENED) {
+                        $now = date('Y-m-d H:i:s');
+                        $order->pay_status = Order::PAY_STATUS_CLOSED;
+                        $order->close_time = $now;
+                        $order->save();
+                        
+                        OrderLogService::log(
+                            $traceId,
+                            $orderNumber,
+                            $order->merchant_order_no,
+                            '关闭',
+                            'INFO',
+                            '节点20-订单关闭',
+                            [
+                                'action' => '订单关闭',
+                                'close_source' => 'OAuth后过期检查',
+                                'operator_ip' => $request->getRealIp(),
+                                'close_time' => $now
+                            ],
+                            $request->getRealIp(),
+                            $request->header('user-agent', '')
+                        );
+                    }
+                    
+                    return $this->error('订单已过期，无法支付');
+                }
+                
                 // OAuth授权成功后，直接生成支付表单并自动提交（不返回支付页面，减少跳转）
                 Log::info('OAuth授权成功，开始生成支付', [
                     'order_number' => $orderNumber,
@@ -836,6 +873,31 @@ HTML;
             $orderStatusText = $this->getPayStatusText($order->pay_status);
             $isExpired = $order->expire_time && strtotime($order->expire_time) < time();
             
+            // 如果订单是已创建状态，更新为已打开状态（用户已访问支付页面）
+            if ($order->pay_status == Order::PAY_STATUS_CREATED) {
+                $order->pay_status = Order::PAY_STATUS_OPENED;
+                $order->first_open_ip = $request->getRealIp();
+                $order->first_open_time = date('Y-m-d H:i:s');
+                $order->save();
+                
+                OrderLogService::log(
+                    $traceId,
+                    $orderNumber,
+                    $order->merchant_order_no,
+                    '访问',
+                    'INFO',
+                    '节点8-订单状态更新为已打开',
+                    [
+                        'old_status' => Order::PAY_STATUS_CREATED,
+                        'new_status' => Order::PAY_STATUS_OPENED,
+                        'first_open_ip' => $order->first_open_ip,
+                        'first_open_time' => $order->first_open_time
+                    ],
+                    $request->getRealIp(),
+                    $request->header('user-agent', '')
+                );
+            }
+            
             OrderLogService::log(
                 $traceId,
                 $orderNumber,
@@ -848,14 +910,14 @@ HTML;
                     'status_text' => $orderStatusText,
                     'expire_time' => $order->expire_time,
                     'is_expired' => $isExpired,
-                    'is_payable' => $order->pay_status == Order::PAY_STATUS_UNPAID && !$isExpired
+                    'is_payable' => ($order->pay_status == Order::PAY_STATUS_CREATED || $order->pay_status == Order::PAY_STATUS_OPENED) && !$isExpired
                 ],
                 $request->getRealIp(),
                 $request->header('user-agent', '')
             );
             
-            // 检查订单状态
-            if ($order->pay_status != Order::PAY_STATUS_UNPAID) {
+            // 检查订单状态（允许已创建和已打开状态）
+            if ($order->pay_status != Order::PAY_STATUS_CREATED && $order->pay_status != Order::PAY_STATUS_OPENED) {
                 $statusMessage = match ($order->pay_status) {
                     Order::PAY_STATUS_PAID => '订单已支付，无需重复操作！',
                     Order::PAY_STATUS_CLOSED => '订单已关闭，无法支付',
@@ -866,6 +928,30 @@ HTML;
             }
             
             if ($isExpired) {
+                // 如果订单已过期，自动关闭
+                if ($order->pay_status == Order::PAY_STATUS_OPENED) {
+                    $now = date('Y-m-d H:i:s');
+                    $order->pay_status = Order::PAY_STATUS_CLOSED;
+                    $order->close_time = $now;
+                    $order->save();
+                    
+                    OrderLogService::log(
+                        $traceId,
+                        $orderNumber,
+                        $order->merchant_order_no,
+                        '关闭',
+                        'INFO',
+                        '节点20-订单关闭',
+                        [
+                            'action' => '订单关闭',
+                            'close_source' => '支付页面过期检查',
+                            'operator_ip' => $request->getRealIp(),
+                            'close_time' => $now
+                        ],
+                        $request->getRealIp(),
+                        $request->header('user-agent', '')
+                    );
+                }
                 return $this->error('订单已过期，无法支付');
             }
             
@@ -1720,7 +1806,7 @@ HTML;
                 return json(['code' => 404, 'msg' => '订单不存在', 'data' => null]);
             }
             $now = date('Y-m-d H:i:s');
-            if ($order->pay_status == 0 && $order->expire_time && $order->expire_time < $now) {
+            if (($order->pay_status == Order::PAY_STATUS_CREATED || $order->pay_status == Order::PAY_STATUS_OPENED) && $order->expire_time && $order->expire_time < $now) {
                 Db::table('order')->where('id', $order->id)->update([
                     'pay_status' => 2,
                     'close_time' => $now,
@@ -1758,8 +1844,10 @@ HTML;
     private function getPayStatusText(int $status): string
     {
         switch ($status) {
-            case Order::PAY_STATUS_UNPAID:
-                return '待支付';
+            case Order::PAY_STATUS_CREATED:
+                return '已创建';
+            case Order::PAY_STATUS_OPENED:
+                return '已打开';
             case Order::PAY_STATUS_PAID:
                 return '已支付';
             case Order::PAY_STATUS_CLOSED:

@@ -223,7 +223,8 @@ class OrderController
         $totalCount = (clone $query)->count();
 
         // 各状态订单数
-        $unpaidCount = (clone $query)->where('pay_status', Order::PAY_STATUS_UNPAID)->count();
+        $createdCount = (clone $query)->where('pay_status', Order::PAY_STATUS_CREATED)->count();
+        $openedCount = (clone $query)->where('pay_status', Order::PAY_STATUS_OPENED)->count();
         $paidCount = (clone $query)->where('pay_status', Order::PAY_STATUS_PAID)->count();
         $closedCount = (clone $query)->where('pay_status', Order::PAY_STATUS_CLOSED)->count();
         $refundedCount = (clone $query)->where('pay_status', Order::PAY_STATUS_REFUNDED)->count();
@@ -237,7 +238,8 @@ class OrderController
 
         return success([
             'total_count' => $totalCount,
-            'unpaid_count' => $unpaidCount,
+            'created_count' => $createdCount,
+            'opened_count' => $openedCount,
             'paid_count' => $paidCount,
             'closed_count' => $closedCount,
             'refunded_count' => $refundedCount,
@@ -385,7 +387,8 @@ class OrderController
     private function getPayStatusText($status): string
     {
         $statusMap = [
-            Order::PAY_STATUS_UNPAID => '待支付',
+            Order::PAY_STATUS_CREATED => '已创建',
+            Order::PAY_STATUS_OPENED => '已打开',
             Order::PAY_STATUS_PAID => '已支付',
             Order::PAY_STATUS_CLOSED => '已关闭',
             Order::PAY_STATUS_REFUNDED => '已退款'

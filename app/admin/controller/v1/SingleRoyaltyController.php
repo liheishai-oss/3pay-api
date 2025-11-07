@@ -18,11 +18,20 @@ class SingleRoyaltyController
         $isAgent = ($userData['user_group_id'] ?? 0) == 3;
         
         $page = $request->get('page', 1);
-        $limit = $request->get('limit', 20);
-        $payeeName = $request->get('payee_name', '');
-        $payeeAccount = $request->get('payee_account', '');
-        $status = $request->get('status', '');
-        $agentId = $request->get('agent_id', '');
+        $limit = $request->get('page_size', $request->get('limit', 20));
+        
+        // 支持search参数（JSON格式）
+        $searchJson = $request->get('search', '');
+        $searchParams = [];
+        if ($searchJson) {
+            $searchParams = json_decode($searchJson, true) ?: [];
+        }
+        
+        // 优先从search参数中获取，否则从直接参数获取
+        $payeeName = $searchParams['payee_name'] ?? $request->get('payee_name', '');
+        $payeeAccount = $searchParams['payee_account'] ?? $request->get('payee_account', '');
+        $status = $searchParams['status'] ?? $request->get('status', '');
+        $agentId = $searchParams['agent_id'] ?? $request->get('agent_id', '');
 
         $query = SingleRoyalty::with(['agent']);
 
@@ -53,10 +62,11 @@ class SingleRoyaltyController
             ->toArray();
 
         return success([
-            'list' => $list,
+            'data' => $list,
             'total' => $total,
-            'page' => (int)$page,
-            'limit' => (int)$limit
+            'current_page' => (int)$page,
+            'per_page' => (int)$limit,
+            'admin' => false
         ]);
     }
 
@@ -203,9 +213,8 @@ class SingleRoyaltyController
         $isAgent = ($userData['user_group_id'] ?? 0) == 3;
         
         $id = $request->post('id');
-        $status = $request->post('status');
 
-        if (!$id || !isset($status)) {
+        if (!$id) {
             return error('参数错误');
         }
 
@@ -222,10 +231,11 @@ class SingleRoyaltyController
             return error('单笔分账不存在或无权限操作');
         }
 
-        $singleRoyalty->status = $status;
+        // 自动切换状态：1变0，0变1
+        $singleRoyalty->status = $singleRoyalty->status == 1 ? 0 : 1;
         $singleRoyalty->save();
 
-        return success([], '操作成功');
+        return success(['status' => $singleRoyalty->status], '操作成功');
     }
 
     /**

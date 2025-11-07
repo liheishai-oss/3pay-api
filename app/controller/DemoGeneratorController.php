@@ -9,11 +9,15 @@ class DemoGeneratorController
     public function index(Request $request)
     {
         // 引入PaymentDemo类
-        require_once base_path() . '/../demo/php/payment_demo.php';
+        $demoFile = base_path() . '/public/demo/payment_demo.php';
+        if (!file_exists($demoFile)) {
+            return response('Demo文件不存在: ' . $demoFile, 404);
+        }
+        require_once $demoFile;
         
         // 配置API密钥
-        $apiKey = 'f227cf12fc2450fb8d6ced8c49d7f0d2';
-        $apiSecret = 'c8fe2a77ff57f5d9ef9cb615b6d55fb1';
+        $apiKey = '05a28411d8a2a1c689971996b966d44f';
+        $apiSecret = '7cbcbf5cd3a784496c4f260f86153c9500682dfd0c2927808e1418a8af6b8471';
         $baseUrl = 'http://127.0.0.1:8787';
         
         // 处理表单提交

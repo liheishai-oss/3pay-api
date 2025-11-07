@@ -332,7 +332,7 @@ class OrderController
                     ? $params['return_url']
                     : ($merchant->return_url ?? '');
 
-                // 创建订单
+                // 创建订单（默认状态为已创建，待打开）
                 $order = Order::create([
                     'merchant_id' => $merchant->id,
                     'agent_id' => $merchant->agent_id,
@@ -342,7 +342,7 @@ class OrderController
                     'product_id' => $product->id,
                     'subject_id' => $subject->id,
                     'order_amount' => $amount,
-                    'pay_status' => Order::PAY_STATUS_UNPAID,
+                    'pay_status' => Order::PAY_STATUS_CREATED,
                     'notify_status' => Order::NOTIFY_STATUS_PENDING,
                     'notify_times' => 0,
                     'notify_url' => $computedNotifyUrl,
@@ -369,7 +369,7 @@ class OrderController
                             'product_id' => $product->id,
                             'subject_id' => $subject->id,
                             'order_amount' => $amount,
-                            'pay_status' => Order::PAY_STATUS_UNPAID,
+                            'pay_status' => Order::PAY_STATUS_CREATED,
                             'expire_time' => $expireTime
                         ]
                     ],
@@ -733,9 +733,9 @@ class OrderController
                 }
             }
             // ==== 实时同步分支 END ====
-            // 检查订单状态
-            if ($order->pay_status != Order::PAY_STATUS_UNPAID) {
-                return $this->error('只有待支付订单才能关闭');
+            // 检查订单状态（允许已创建和已打开状态）
+            if ($order->pay_status != Order::PAY_STATUS_CREATED && $order->pay_status != Order::PAY_STATUS_OPENED) {
+                return $this->error('只有已创建或已打开订单才能关闭');
             }
             // 关闭订单
             $order->pay_status = Order::PAY_STATUS_CLOSED;
@@ -831,8 +831,10 @@ class OrderController
     private function getPayStatusText($status): string
     {
         switch ($status) {
-            case Order::PAY_STATUS_UNPAID:
-                return '待支付';
+            case Order::PAY_STATUS_CREATED:
+                return '已创建';
+            case Order::PAY_STATUS_OPENED:
+                return '已打开';
             case Order::PAY_STATUS_PAID:
                 return '已支付';
             case Order::PAY_STATUS_CLOSED:
