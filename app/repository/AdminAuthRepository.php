@@ -45,6 +45,7 @@ class AdminAuthRepository
         Redis::hset($redisKey, 'group_id', $userInfo['group_id']);
         Redis::hset($redisKey, 'user_group_id', $userInfo['user_group_id']);
         Redis::hset($redisKey, 'status', $userInfo['status']);
+        Redis::hset($redisKey, 'agent_id', $userInfo['agent_id']);
         Redis::expire($redisKey, 86400 * 7);
 
         return $token;

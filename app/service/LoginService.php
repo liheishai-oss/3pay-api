@@ -18,7 +18,7 @@ class LoginService
     {
         // 验证用户凭据
         $admin = $this->doginDataValidator->validate($param, false);
-        
+
         // 检查是否开启谷歌验证
         $config = ConfigHelper::getAll();
         $googleEnabled = json_decode($config['admin_login_verify_mode'] ?? '[]', true);
@@ -66,10 +66,11 @@ class LoginService
         // 判断是否为代理商（代理商管理组 group_id = 3）
         $isAgent = $admin->group_id == 3;
         $agentId = null;
-        
+
         // 如果是代理商，查询对应的 agent_id
         if ($isAgent) {
             $agent = \app\model\Agent::where('admin_id', $admin->id)->first();
+
             if ($agent) {
                 $agentId = $agent->id;
             }
