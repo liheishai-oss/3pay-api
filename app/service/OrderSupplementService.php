@@ -338,6 +338,10 @@ class OrderSupplementService
                 
                 $order->pay_status = Order::PAY_STATUS_PAID;
                 $order->pay_time = $alipayOrder['gmt_payment'] ?? date('Y-m-d H:i:s');
+                // 补单时记录操作者IP（如果是手动补单，可能是管理员IP；自动补单则为SYSTEM）
+                if (empty($order->pay_ip)) {
+                    $order->pay_ip = $operatorIp;
+                }
                 
                 // 更新支付宝交易号（如果存在）
                 if (!empty($alipayOrder['trade_no'])) {

@@ -25,7 +25,7 @@ class OrderConstants
     const NOTIFY_STATUS_FAILED = 2;   // 通知失败
     
     // 订单过期时间（分钟）
-    const ORDER_EXPIRE_MINUTES = 30;
+    const ORDER_EXPIRE_MINUTES = 10;
 }
 
 

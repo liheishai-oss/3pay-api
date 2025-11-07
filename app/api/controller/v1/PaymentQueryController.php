@@ -82,8 +82,8 @@ class PaymentQueryController
                     $order->agent_id
                 );
 
-                // 更新本地订单状态
-                $this->updateOrderFromPaymentResult($order, $paymentResult);
+                // 更新本地订单状态（传递请求对象以获取IP）
+                $this->updateOrderFromPaymentResult($order, $paymentResult, $request);
 
                 return $this->success([
                     'order_no' => $order->platform_order_no,
@@ -130,22 +130,36 @@ class PaymentQueryController
      * 根据支付结果更新订单状态
      * @param Order $order 订单
      * @param array $paymentResult 支付结果
+     * @param Request $request 请求对象（用于获取IP）
      */
-    private function updateOrderFromPaymentResult(Order $order, array $paymentResult)
+    private function updateOrderFromPaymentResult(Order $order, array $paymentResult, $request = null)
     {
         try {
             $tradeStatus = $paymentResult['trade_status'] ?? '';
             
             if (in_array($tradeStatus, ['TRADE_SUCCESS', 'TRADE_FINISHED'])) {
                 // 支付成功
-                $order->update([
+                // 注意：支付宝查询接口不返回支付者IP，真正的支付者IP应该从支付回调（notify）中获取
+                // 如果 pay_ip 已存在（说明已收到回调），则不覆盖；如果为空，则使用查询请求IP作为备选（非真实支付者IP）
+                $updateData = [
                     'pay_status' => Order::PAY_STATUS_PAID,
                     'paid_at' => $paymentResult['gmt_payment'] ?? now(),
                     'trade_no' => $paymentResult['trade_no'] ?? '',
                     'buyer_id' => $paymentResult['buyer_id'] ?? '',
                     'buyer_logon_id' => $paymentResult['buyer_logon_id'] ?? '',
                     'receipt_amount' => $paymentResult['receipt_amount'] ?? $order->order_amount,
-                ]);
+                ];
+                
+                // 只有在 pay_ip 为空时才设置（使用查询请求IP作为备选，非真实支付者IP）
+                if (empty($order->pay_ip) && $request) {
+                    $updateData['pay_ip'] = $request->getRealIp();
+                    Log::info('通过查询接口更新订单，使用查询请求IP作为备选（非真实支付者IP）', [
+                        'order_id' => $order->id,
+                        'query_ip' => $updateData['pay_ip']
+                    ]);
+                }
+                
+                $order->update($updateData);
 
                 Log::info('订单状态更新为已支付', [
                     'order_id' => $order->id,
@@ -154,12 +168,15 @@ class PaymentQueryController
 
             } elseif ($tradeStatus === 'TRADE_CLOSED') {
                 // 交易关闭
+                $now = date('Y-m-d H:i:s');
                 $order->update([
                     'pay_status' => Order::PAY_STATUS_CLOSED,
+                    'close_time' => $now,
                 ]);
 
                 Log::info('订单状态更新为已关闭', [
-                    'order_id' => $order->id
+                    'order_id' => $order->id,
+                    'close_time' => $now
                 ]);
             }
 
@@ -179,8 +196,10 @@ class PaymentQueryController
     private function getPayStatusText(int $status): string
     {
         switch ($status) {
-            case Order::PAY_STATUS_UNPAID:
-                return '待支付';
+            case Order::PAY_STATUS_CREATED:
+                return '已创建';
+            case Order::PAY_STATUS_OPENED:
+                return '已打开';
             case Order::PAY_STATUS_PAID:
                 return '已支付';
             case Order::PAY_STATUS_CLOSED:

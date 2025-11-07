@@ -87,6 +87,40 @@ class PaymentNotifyController
                 Log::warning('订单不存在', ['order_no' => $params['out_trade_no']]);
                 return 'fail';
             }
+            
+            // 检查订单是否过期（防止过期订单的支付回调被处理）
+            $isExpired = $order->expire_time && strtotime($order->expire_time) < time();
+            if ($isExpired && ($order->pay_status == Order::PAY_STATUS_CREATED || $order->pay_status == Order::PAY_STATUS_OPENED)) {
+                \app\service\OrderLogService::log(
+                    $order->trace_id ?? '',
+                    $order->platform_order_no,
+                    $order->merchant_order_no,
+                    '支付回调', 'WARN', '节点21-订单已过期',
+                    [
+                        'action' => '拒绝过期订单支付回调',
+                        'expire_time' => $order->expire_time,
+                        'current_time' => date('Y-m-d H:i:s'),
+                        'trade_no' => $params['trade_no'] ?? ''
+                    ],
+                    $request->getRealIp(),
+                    $request->header('user-agent', '')
+                );
+                Log::warning('订单已过期，拒绝支付回调', [
+                    'order_no' => $params['out_trade_no'],
+                    'expire_time' => $order->expire_time,
+                    'trade_no' => $params['trade_no'] ?? ''
+                ]);
+                
+                // 如果订单还未关闭，先关闭订单
+                if ($order->pay_status == Order::PAY_STATUS_CREATED || $order->pay_status == Order::PAY_STATUS_OPENED) {
+                    $now = date('Y-m-d H:i:s');
+                    $order->pay_status = Order::PAY_STATUS_CLOSED;
+                    $order->close_time = $now;
+                    $order->save();
+                }
+                
+                return 'fail'; // 返回fail，让支付宝知道我们拒绝了这次回调
+            }
 
             // 获取产品信息
             $product = Product::find($order->product_id);
@@ -111,8 +145,8 @@ class PaymentNotifyController
                     ['action'=>'支付回调成功','trade_no'=>$params['trade_no']??'','params'=>$params],
                     $request->getRealIp(), $request->header('user-agent', '')
                 );
-                // 更新订单状态
-                $this->updateOrderStatus($order, $params);
+                // 更新订单状态（记录支付IP，从回调请求IP获取）
+                $this->updateOrderStatus($order, $params, $request->getRealIp());
                 Log::info('支付通知处理成功', [
                     'order_no' => $params['out_trade_no'],
                     'trade_no' => $params['trade_no'] ?? ''
@@ -148,7 +182,7 @@ class PaymentNotifyController
      * @param Order $order 订单
      * @param array $notifyParams 通知参数
      */
-    private function updateOrderStatus(Order $order, array $notifyParams)
+    private function updateOrderStatus(Order $order, array $notifyParams, $payIp = '')
     {
         try {
             Db::beginTransaction();
@@ -162,6 +196,7 @@ class PaymentNotifyController
                 // 'notify_times' => $order->notify_times + 1,
                 // 统一使用 pay_time 字段
                 'pay_time' => date('Y-m-d H:i:s'),
+                'pay_ip' => $payIp, // 记录支付IP
                 'trade_no' => $notifyParams['trade_no'] ?? '',
                 'buyer_id' => $notifyParams['buyer_id'] ?? '',
                 'buyer_logon_id' => $notifyParams['buyer_logon_id'] ?? '',
