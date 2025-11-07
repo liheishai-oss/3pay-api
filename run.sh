@@ -30,7 +30,7 @@ if [[ "$current_dir" != "/" && "$current_dir" =~ "/$target_dir" ]]; then
   # 获取 www 后面的路径
   cmd="php ./api/${dir_name#*$target_dir/}/start.php ${action}"
   echo "www 目录后的路径是: $cmd"
-  docker exec -it php82 bash -c "php ./3pay/third_party_payment_api/start.php ${action}"
+  docker exec -it php82 bash -c "php ./3pay/3pay-api/start.php ${action}"
 else
   echo "未找到www目录"
 fi

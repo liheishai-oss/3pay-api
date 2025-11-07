@@ -47,8 +47,22 @@ class Auth implements MiddlewareInterface
                 // 将 Redis 中的字符串转换为布尔值
                 $userData['is_merchant_admin'] = ($userData['is_merchant_admin'] ?? '0') === '1';
                 $userData['is_agent'] = ($userData['is_agent'] ?? '0') === '1';
+                
                 // 转换 agent_id 为整数或 null
-                $userData['agent_id'] = !empty($userData['agent_id']) ? (int)$userData['agent_id'] : null;
+                // 如果是代理商但 agent_id 为空，尝试从数据库查询
+                $isAgent = ($userData['is_agent'] ?? '0') === '1';
+                echo "代理检测";
+                print_r($userData);
+                if ($isAgent && empty($userData['agent_id'])) {
+                    $agent = \app\model\Agent::where('admin_id', $userData['admin_id'])->first();
+                    if ($agent) {
+                        $userData['agent_id'] = $agent->id;
+                    } else {
+                        $userData['agent_id'] = null;
+                    }
+                } else {
+                    $userData['agent_id'] = !empty($userData['agent_id']) ? (int)$userData['agent_id'] : null;
+                }
             } catch (\Exception $e) {
 
                 if($e->getCode() == 401){
@@ -80,6 +94,13 @@ class Auth implements MiddlewareInterface
                     $agent = \app\model\Agent::where('admin_id', $userinfo->id)->first();
                     if ($agent) {
                         $agentId = $agent->id;
+                    } else {
+                        // 记录警告日志
+                        Log::warning('代理商账号未找到对应的代理商记录', [
+                            'admin_id' => $userinfo->id,
+                            'username' => $userinfo->username,
+                            'group_id' => $userinfo->group_id
+                        ]);
                     }
                 }
                 
@@ -106,7 +127,6 @@ class Auth implements MiddlewareInterface
         if (isset($request->userData)) {
             $this->logUserOperation($request);
         }
-
         return $response;
     }
     private function logUserOperation(Request $request)

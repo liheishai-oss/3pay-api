@@ -8,12 +8,11 @@ use support\Model;
  * 商户模型
  * @property int $id 主键ID
  * @property int $agent_id 代理商ID
+ * @property int $admin_id 关联的admin管理员ID
+ * @property string $username 商户登录账号
  * @property string $merchant_name 商户名称
- * @property string $contact_email 联系邮箱
  * @property string $api_key API密钥
  * @property string $api_secret API密钥Secret
- * @property string $notify_url 回调通知地址
- * @property string $return_url 同步返回地址
  * @property string $ip_whitelist IP白名单
  * @property int $status 状态：1启用 0禁用
  * @property string $remark 备注
@@ -29,12 +28,11 @@ class Merchant extends Model
 
     protected $fillable = [
         'agent_id',
+        'admin_id',
+        'username',
         'merchant_name',
-        'contact_email',
         'api_key',
         'api_secret',
-        'notify_url',
-        'return_url',
         'ip_whitelist',
         'status',
         'remark'
@@ -43,6 +41,7 @@ class Merchant extends Model
     protected $casts = [
         'id' => 'integer',
         'agent_id' => 'integer',
+        'admin_id' => 'integer',
         'status' => 'integer',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',

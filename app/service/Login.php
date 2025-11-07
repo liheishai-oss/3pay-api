@@ -93,7 +93,8 @@ class Login
             Redis::hset($redisKey, 'status', $userInfo['status']);
             Redis::hset($redisKey, 'is_merchant_admin', $userInfo['is_merchant_admin'] ? '1' : '0');
             Redis::hset($redisKey, 'is_agent', $userInfo['is_agent'] ? '1' : '0');
-            Redis::hset($redisKey, 'agent_id', $userInfo['agent_id'] ?? '');
+            // 存储 agent_id，如果是 null 则存储空字符串，但中间件会正确处理
+            Redis::hset($redisKey, 'agent_id', $userInfo['agent_id'] ? (string)$userInfo['agent_id'] : '');
             // 设置过期时间为7天
             Redis::expire($redisKey, 86400*7);
             return  ['Authorization'=>$token];

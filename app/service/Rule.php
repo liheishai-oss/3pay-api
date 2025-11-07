@@ -28,7 +28,6 @@ class Rule
         $rule->path = $data['path'];
         $rule->icon = $data['icon'];
         $rule->has_children = 0;
-        print_r($data);
         $rule->save();
 
         // 更新父级的 has_children 字段
@@ -47,7 +46,6 @@ class Rule
             throw new \Exception('要编辑的权限规则不存在');
         }
         $parent_id = $rule->parent_id;
-        print_r($parent_id);
         // 判断是否修改了 rule，且值已存在
         if (
             isset($data['rule']) &&
