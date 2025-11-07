@@ -318,9 +318,8 @@ class MerchantController
         $isAgent = ($userData['user_group_id'] ?? 0) == 3;
         
         $id = $request->post('id');
-        $status = $request->post('status');
 
-        if (!$id || !isset($status)) {
+        if (!$id) {
             return error('参数错误');
         }
 
@@ -337,19 +336,21 @@ class MerchantController
             return error('商户不存在或无权限操作');
         }
 
-        $merchant->status = $status;
+        // 自动切换状态：1变0，0变1
+        $newStatus = $merchant->status == 1 ? 0 : 1;
+        $merchant->status = $newStatus;
         $merchant->save();
 
         // 同步更新关联的admin账号状态
         if ($merchant->admin_id) {
             $admin = Admin::find($merchant->admin_id);
             if ($admin) {
-                $admin->status = $status;
+                $admin->status = $newStatus;
                 $admin->save();
             }
         }
 
-        return success([], '操作成功');
+        return success(['status' => $newStatus], '操作成功');
     }
 
     /**
