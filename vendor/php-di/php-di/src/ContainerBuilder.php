@@ -280,7 +280,7 @@ class ContainerBuilder
      * @throws InvalidArgumentException when writeToFile is set to true and the proxy directory is null
      * @return $this
      */
-    public function writeProxiesToFile(bool $writeToFile, string $proxyDirectory = null) : self
+    public function writeProxiesToFile(bool $writeToFile, ?string $proxyDirectory = null) : self
     {
         $this->ensureNotLocked();
 
