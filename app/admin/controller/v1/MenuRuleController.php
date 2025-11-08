@@ -202,15 +202,14 @@ class MenuRuleController
 
     public function destroy(Request $request): Response
     {
-        $param = $request->all();
-        $idsString = $param['ids'] ?? '';
+        $ids = $request->post('ids');
 
-        if (empty($idsString)) {
-            throw new MyBusinessException('未指定要删除的投诉ID');
+        if (empty($ids) || !is_array($ids)) {
+            throw new MyBusinessException('参数错误，缺少要删除的ID列表');
         }
 
         try {
-            AdminRule::whereIn('id', $idsString)->delete();
+            AdminRule::whereIn('id', $ids)->delete();
 
             return success([], '删除成功');
         } catch (Throwable $e) {

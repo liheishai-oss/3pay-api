@@ -132,27 +132,27 @@ class AlertController
     }
     
     /**
-     * 删除预警规则
+     * 删除预警规则（支持批量删除）
      */
     public function deleteRule(Request $request): Response
     {
         try {
-            $id = $request->post('id');
+            $ids = $request->post('ids');
             
-            if (empty($id)) {
-                return $this->error('规则ID不能为空');
+            if (empty($ids) || !is_array($ids)) {
+                return $this->error('参数错误，缺少要删除的ID列表');
             }
             
             // 软删除预警规则
             $affected = Db::table('alert_rules')
-                ->where('id', $id)
+                ->whereIn('id', $ids)
                 ->update([
                     'status' => 0,
                     'updated_at' => date('Y-m-d H:i:s')
                 ]);
             
             if ($affected > 0) {
-                return $this->success([], '删除成功');
+                return $this->success([], '删除成功，共删除' . $affected . '条记录');
             } else {
                 return $this->error('规则不存在或删除失败');
             }

@@ -403,17 +403,28 @@ class ServerController
     }
 
     /**
-     * 删除服务器（仅允许删除离线状态的服务器）
+     * 删除服务器（支持批量删除，仅允许删除离线状态的服务器）
      * @param Request $request
-     * @param int $id
      * @return Response
      */
-    public function destroy(Request $request, int $id): Response
+    public function destroy(Request $request): Response
     {
         try {
-            $server = Server::find($id);
+            $ids = $request->post('ids');
             
-            if (!$server) {
+            if (empty($ids) || !is_array($ids)) {
+                return json([
+                    'code' => 400,
+                    'status' => false,
+                    'message' => '参数错误，缺少要删除的ID列表',
+                    'data' => null
+                ]);
+            }
+
+            // 查询所有服务器
+            $servers = Server::whereIn('id', $ids)->get();
+            
+            if ($servers->isEmpty()) {
                 return json([
                     'code' => 404,
                     'status' => false,
@@ -422,8 +433,12 @@ class ServerController
                 ]);
             }
 
-            // 只允许删除离线状态的服务器
-            if ($server->status !== Server::STATUS_OFFLINE) {
+            // 检查是否有非离线状态的服务器
+            $offlineServers = $servers->filter(function ($server) {
+                return $server->status === Server::STATUS_OFFLINE;
+            });
+            
+            if ($offlineServers->isEmpty()) {
                 return json([
                     'code' => 400,
                     'status' => false,
@@ -432,23 +447,24 @@ class ServerController
                 ]);
             }
 
-            $server->delete();
+            // 只删除离线状态的服务器
+            $offlineIds = $offlineServers->pluck('id')->toArray();
+            $deletedCount = Server::whereIn('id', $offlineIds)->delete();
 
-            Log::info('服务器删除成功', [
-                'id' => $id,
-                'server_name' => $server->server_name,
-                'server_ip' => $server->server_ip
+            Log::info('服务器批量删除成功', [
+                'ids' => $offlineIds,
+                'deleted_count' => $deletedCount
             ]);
 
             return json([
                 'code' => 200,
                 'status' => true,
-                'message' => '删除成功',
+                'message' => '删除成功，共删除' . $deletedCount . '条记录',
                 'data' => null
             ]);
         } catch (\Exception $e) {
             Log::error('删除服务器失败', [
-                'id' => $id,
+                'ids' => $ids ?? [],
                 'error' => $e->getMessage()
             ]);
             

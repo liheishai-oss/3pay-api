@@ -286,9 +286,35 @@ class OrderController
             }
             
             $cert = $subject->cert;
-            if (empty($cert->app_private_key) || empty($cert->app_public_cert) || 
-                empty($cert->alipay_public_cert) || empty($cert->alipay_root_cert)) {
-                return $this->error('支付主体证书配置不完整');
+            
+            // 验证应用私钥（必需）
+            if (empty($cert->app_private_key)) {
+                return $this->error('支付主体证书配置不完整：缺少应用私钥');
+            }
+            
+            // 验证证书：每个证书必须有文件路径或证书内容（至少一个）
+            $certChecks = [
+                'app_public_cert' => ['path' => $cert->app_public_cert_path, 'content' => $cert->app_public_cert, 'name' => '应用公钥证书'],
+                'alipay_public_cert' => ['path' => $cert->alipay_public_cert_path, 'content' => $cert->alipay_public_cert, 'name' => '支付宝公钥证书'],
+                'alipay_root_cert' => ['path' => $cert->alipay_root_cert_path, 'content' => $cert->alipay_root_cert, 'name' => '支付宝根证书']
+            ];
+            
+            foreach ($certChecks as $certType => $certInfo) {
+                $hasPath = !empty($certInfo['path']);
+                $hasContent = !empty($certInfo['content']);
+                
+                // 如果有路径，检查文件是否存在
+                if ($hasPath) {
+                    $fullPath = base_path('public' . $certInfo['path']);
+                    if (file_exists($fullPath)) {
+                        continue; // 文件存在，通过验证
+                    }
+                }
+                
+                // 如果文件不存在或没有路径，必须有证书内容
+                if (!$hasContent) {
+                    return $this->error("支付主体证书配置不完整：{$certInfo['name']}（文件不存在且数据库中没有证书内容）");
+                }
             }
             
             // 生成平台订单号（包含代理商ID）

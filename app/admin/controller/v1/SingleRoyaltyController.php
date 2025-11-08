@@ -173,35 +173,47 @@ class SingleRoyaltyController
     }
 
     /**
-     * 删除单笔分账
+     * 删除单笔分账（支持批量删除）
      */
     public function destroy(Request $request)
     {
         $userData = $request->userData;
         $isAgent = ($userData['user_group_id'] ?? 0) == 3;
         
-        $id = $request->post('id');
+        $ids = $request->post('ids');
 
-        if (!$id) {
-            return error('参数错误');
+        if (empty($ids) || !is_array($ids)) {
+            return error('参数错误，缺少要删除的ID列表');
         }
 
-        $query = SingleRoyalty::where('id', $id);
+        $query = SingleRoyalty::whereIn('id', $ids);
         
         // 代理商只能删除自己的数据
         if ($isAgent) {
             $query->where('agent_id', $userData['agent_id']);
         }
         
-        $singleRoyalty = $query->first();
+        $singleRoyalties = $query->get();
 
-        if (!$singleRoyalty) {
+        if ($singleRoyalties->isEmpty()) {
             return error('单笔分账不存在或无权限操作');
         }
 
-        $singleRoyalty->delete();
+        // 获取实际可以删除的ID（权限过滤后的）
+        $validIds = $singleRoyalties->pluck('id')->toArray();
 
-        return success([], '删除成功');
+        try {
+            Db::beginTransaction();
+
+            // 批量删除
+            SingleRoyalty::whereIn('id', $validIds)->delete();
+
+            Db::commit();
+            return success([], '删除成功');
+        } catch (\Exception $e) {
+            Db::rollBack();
+            return error('删除失败：' . $e->getMessage());
+        }
     }
 
     /**
