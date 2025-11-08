@@ -117,11 +117,7 @@ class AdminGroupController
 
     public function destroy(Request $request): Response
     {
-        $ids = $request->post('ids'); // 接收前端传来的 'ids' 字符串，例如 "1,2"
-
-        if (empty($ids)) {
-            return error('请选择要删除的分组');
-        }
+        $ids = $request->post('ids');
 
         if (empty($ids) || !is_array($ids)) {
             throw new MyBusinessException('参数错误，缺少要删除的ID列表');

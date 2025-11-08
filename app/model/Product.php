@@ -172,6 +172,14 @@ class Product extends Model
 
         throw new \Exception('无法生成产品编号，所有编号已被使用');
     }
+
+    /**
+     * 时间格式转换 - 解决新版ORM时间格式问题
+     */
+    protected function serializeDate(\DateTimeInterface $date)
+    {
+        return $date->format('Y-m-d H:i:s');
+    }
 }
 
 

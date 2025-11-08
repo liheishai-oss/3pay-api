@@ -70,5 +70,13 @@ class AlipayBlacklist extends Model
     {
         return 'Y-m-d H:i:s';
     }
+
+    /**
+     * 时间格式转换 - 解决新版ORM时间格式问题
+     */
+    protected function serializeDate(\DateTimeInterface $date)
+    {
+        return $date->format('Y-m-d H:i:s');
+    }
 }
 

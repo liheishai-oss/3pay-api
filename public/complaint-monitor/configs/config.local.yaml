@@ -1,0 +1,45 @@
+# 本地开发环境配置（宿主机运行）
+
+app:
+  name: "complaint-monitor"
+  environment: "development"
+  log_level: "debug"
+
+database:
+  host: "127.0.0.1"  # 本地访问Docker MySQL
+  port: 3306
+  username: "third_party_payment"
+  password: "rA8f@D2kLmZx!3pQ"
+  database: "third_party_payment"
+  max_open_conns: 100
+  max_idle_conns: 10
+  conn_max_lifetime: 3600
+
+redis:
+  host: "127.0.0.1"  # 本地访问Docker Redis
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 10
+
+worker:
+  refresh_interval: 60  # 刷新主体列表间隔（秒）
+  fetch_interval: 2     # 获取投诉间隔（秒）
+  restartable: true     # 是否自动重启
+
+cert:
+  cache_ttl: 3600  # 证书缓存时间（秒）
+  encryption_key: "12345678901234567890123456789012"  # 32字节密钥（请修改为实际密钥）
+
+lock:
+  base_ttl: 30   # 基础锁TTL（秒）
+  max_ttl: 300   # 最大锁TTL（秒）
+
+metrics:
+  port: 9090
+  path: "/metrics"
+
+health:
+  port: 8080
+  path: "/health"
+

@@ -42,23 +42,21 @@ class AdminLogController
     {
         try {
             $ids = $request->post('ids');
-            if (empty($ids)) {
-                return error('缺少ID');
-            }
-
-            if (empty($ids)) {
-                return error('无效的ID');
+            
+            if (empty($ids) || !is_array($ids)) {
+                return error('参数错误，缺少要删除的ID列表');
             }
 
             // 查询是否存在这些 ID
-            $count = ProductType::whereIn('id', $ids)->where('is_deleted', 0)->count();
+            $count = AdminLog::whereIn('id', $ids)->count();
             if ($count === 0) {
                 return error('未找到任何可删除的数据');
             }
-            // 执行软删除
-            ProductType::whereIn('id', $ids)->update(['is_deleted' => 1]);
+            
+            // 执行删除
+            AdminLog::whereIn('id', $ids)->delete();
 
-            return success([],'删除成功');
+            return success([], '删除成功，共删除' . $count . '条记录');
         } catch (\Throwable $e) {
             return error($e->getMessage());
         }

@@ -128,13 +128,18 @@ class PaymentFactory
             throw new Exception("支付主体证书配置缺失");
         }
 
+        // 处理证书路径：优先使用文件路径，如果文件不存在则使用数据库中的证书内容创建临时文件
+        $alipayCertPath = self::getCertPath($cert->alipay_public_cert_path, $cert->alipay_public_cert, 'alipay_public_cert');
+        $alipayRootCertPath = self::getCertPath($cert->alipay_root_cert_path, $cert->alipay_root_cert, 'alipay_root_cert');
+        $appCertPath = self::getCertPath($cert->app_public_cert_path, $cert->app_public_cert, 'app_public_cert');
+
         // 构建支付配置
         $config = [
             'appid' => $subject->alipay_app_id,
             'AppPrivateKey' => $cert->app_private_key,
-            'alipayCertPublicKey' => 'public' . $cert->alipay_public_cert_path,
-            'alipayRootCert' => 'public' . $cert->alipay_root_cert_path,
-            'appCertPublicKey' => 'public' . $cert->app_public_cert_path,
+            'alipayCertPublicKey' => $alipayCertPath,
+            'alipayRootCert' => $alipayRootCertPath,
+            'appCertPublicKey' => $appCertPath,
             'notify_url' => config('app.url') . '/api/v1/payment/notify/alipay',
             'sandbox' => false, // 暂时禁用沙箱环境
         ];
@@ -143,6 +148,58 @@ class PaymentFactory
         self::validatePaymentConfig($config);
 
         return $config;
+    }
+
+    /**
+     * 获取证书文件路径，如果文件不存在则从数据库内容创建临时文件
+     * @param string|null $certPath 证书文件路径
+     * @param string|null $certContent 证书内容（数据库存储）
+     * @param string $certType 证书类型（用于错误提示）
+     * @return string 证书文件路径
+     * @throws Exception
+     */
+    private static function getCertPath(?string $certPath, ?string $certContent, string $certType): string
+    {
+        // 如果提供了文件路径，先检查文件是否存在
+        if (!empty($certPath)) {
+            $fullPath = base_path('public' . $certPath);
+            if (file_exists($fullPath)) {
+                return 'public' . $certPath;
+            }
+            
+            // 文件不存在，记录警告日志
+            Log::warning("证书文件不存在，尝试使用数据库中的证书内容", [
+                'cert_type' => $certType,
+                'file_path' => $fullPath
+            ]);
+        }
+
+        // 如果文件不存在，尝试使用数据库中的证书内容
+        if (!empty($certContent)) {
+            // 创建临时文件
+            $tempDir = runtime_path() . '/certs';
+            if (!is_dir($tempDir)) {
+                mkdir($tempDir, 0755, true);
+            }
+
+            $tempFile = $tempDir . '/' . uniqid($certType . '_', true) . '.crt';
+            if (file_put_contents($tempFile, $certContent) === false) {
+                throw new Exception("无法创建临时证书文件: {$certType}");
+            }
+
+            // 返回相对于base_path的路径
+            $relativePath = str_replace(base_path() . '/', '', $tempFile);
+            
+            Log::info("使用数据库证书内容创建临时文件", [
+                'cert_type' => $certType,
+                'temp_file' => $tempFile
+            ]);
+
+            return $relativePath;
+        }
+
+        // 既没有文件也没有内容
+        throw new Exception("证书配置缺失: {$certType}（文件不存在且数据库中没有证书内容）");
     }
 
     /**

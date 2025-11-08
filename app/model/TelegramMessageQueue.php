@@ -105,5 +105,13 @@ class TelegramMessageQueue extends Model
     const PRIORITY_NORMAL = 5;    // 普通
     const PRIORITY_LOW = 7;       // 低
     const PRIORITY_LOWEST = 9;    // 最低
+
+    /**
+     * 时间格式转换 - 解决新版ORM时间格式问题
+     */
+    protected function serializeDate(\DateTimeInterface $date)
+    {
+        return $date->format('Y-m-d H:i:s');
+    }
 }
 

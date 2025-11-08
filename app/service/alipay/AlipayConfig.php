@@ -69,14 +69,19 @@ class AlipayConfig
         
         // 验证证书文件是否存在
         $certFiles = [
-            'alipayCertPath' => $config->alipayCertPath,
-            'alipayRootCertPath' => $config->alipayRootCertPath,
-            'merchantCertPath' => $config->merchantCertPath
+            'alipayCertPath' => ['path' => $config->alipayCertPath, 'name' => '支付宝公钥证书'],
+            'alipayRootCertPath' => ['path' => $config->alipayRootCertPath, 'name' => '支付宝根证书'],
+            'merchantCertPath' => ['path' => $config->merchantCertPath, 'name' => '应用公钥证书']
         ];
         
-        foreach ($certFiles as $field => $path) {
-            if (!file_exists($path)) {
-                throw new \Exception("支付宝证书文件不存在: {$field} => {$path}");
+        foreach ($certFiles as $field => $certInfo) {
+            $path = $certInfo['path'];
+            $name = $certInfo['name'];
+            $fullPath = base_path($path);
+            
+            if (!file_exists($fullPath)) {
+                // 提供更详细的错误信息，包括完整路径
+                throw new \Exception("支付宝证书文件不存在: {$name} ({$field})，路径: {$fullPath}。请检查证书文件是否存在，或确保数据库中存储了证书内容。");
             }
         }
     }
