@@ -13,9 +13,9 @@ class AlipayQueryService
 {
     /**
      * 查询订单状态
-     * @param string $orderNumber 订单号（支持商户订单号out_trade_no或支付宝交易号trade_no）
+     * @param string $orderNumber 订单号（必须是商户订单号out_trade_no，即创建订单时传递给支付宝的订单号）
      * @param array $paymentInfo 支付配置信息
-     * @param bool $useTradeNo 是否使用支付宝交易号查询（默认false，使用商户订单号）
+     * @param bool $useTradeNo 是否使用支付宝交易号查询（已废弃，支付宝EasySDK的query方法只支持out_trade_no）
      * @return array 订单信息
      * @throws Exception
      */
@@ -24,6 +24,17 @@ class AlipayQueryService
         try {
             $config = AlipayConfig::getConfig($paymentInfo);
             
+            // 记录查询参数，用于调试
+            Log::info('支付宝订单查询：开始查询', [
+                'order_number' => $orderNumber,
+                'use_trade_no' => $useTradeNo,
+                'note' => '支付宝EasySDK的query方法只支持out_trade_no（商户订单号），不支持trade_no',
+                'app_id' => $config->appId ?? 'NULL'
+            ]);
+            
+            // 注意：支付宝EasySDK的query方法只支持out_trade_no（商户订单号），不支持trade_no
+            // 创建订单时，我们使用platform_order_no作为out_trade_no传递给支付宝
+            // 因此查询时也必须使用相同的platform_order_no作为out_trade_no查询
             $result = Factory::setOptions($config)
                 ->payment()
                 ->common()
@@ -87,21 +98,64 @@ class AlipayQueryService
                     'msg' => $errorMsg,
                     'sub_code' => $subCode,
                     'sub_msg' => $subMsg,
-                    'full_response' => $queryResponse
+                    'app_id' => $config->appId ?? 'NULL',
+                    'full_response' => $queryResponse,
+                    'note' => '如果返回"交易不存在"，请检查：1) 订单号是否正确（创建时使用的out_trade_no）；2) app_id是否匹配（订单创建时使用的app_id）；3) 订单是否已过期被删除'
                 ]);
                 
+                // 特殊处理交易不存在错误
+                if ($subCode === 'ACQ.TRADE_NOT_EXIST' || 
+                    strpos($subMsg, '交易不存在') !== false || 
+                    strpos($subMsg, 'TRADE_NOT_EXIST') !== false ||
+                    strpos($errorMsg, '交易不存在') !== false ||
+                    strpos($errorMsg, 'TRADE_NOT_EXIST') !== false ||
+                    strpos($errorMsg, 'Business Failed') !== false ||
+                    ($errorCode === '40004' && strpos($subMsg, '交易不存在') !== false)) {
+                    throw new Exception("查询订单失败: 交易不存在。可能原因：1) 订单在支付宝中不存在或已过期被删除；2) 订单属于其他应用无法查询；3) 订单号不正确；4) 订单创建失败。错误详情: {$errorMsg}" . ($subMsg ? " - {$subMsg}" : "") . " (错误码: {$errorCode}" . ($subCode ? ", 子错误码: {$subCode}" : "") . ")");
+                }
+                
                 // 特殊处理权限不足错误
-                if ($errorCode === '40004' || strpos($errorMsg, 'Insufficient Permissions') !== false || strpos($subMsg, 'Insufficient Permissions') !== false) {
-                    throw new Exception("查询订单失败: 权限不足。可能原因：1) 支付宝应用未开通订单查询权限；2) 订单属于其他应用无法查询；3) 需要使用支付宝交易号(trade_no)查询而非商户订单号。错误详情: {$errorMsg}" . ($subMsg ? " - {$subMsg}" : ""));
+                if ($errorCode === '40004' || 
+                    $subCode === 'isv.invalid-app-id' ||
+                    strpos($errorMsg, 'Insufficient Permissions') !== false || 
+                    strpos($subMsg, 'Insufficient Permissions') !== false ||
+                    strpos($errorMsg, '权限不足') !== false ||
+                    strpos($subMsg, '权限不足') !== false) {
+                    throw new Exception("查询订单失败: 权限不足。可能原因：1) 支付宝应用未开通订单查询权限；2) 订单属于其他应用无法查询；3) 需要使用支付宝交易号(trade_no)查询而非商户订单号。错误详情: {$errorMsg}" . ($subMsg ? " - {$subMsg}" : "") . " (错误码: {$errorCode}" . ($subCode ? ", 子错误码: {$subCode}" : "") . ")");
                 }
                 
                 throw new Exception("查询订单失败: {$errorMsg}" . ($subMsg ? " - {$subMsg}" : "") . " (错误码: {$errorCode}" . ($subCode ? ", 子错误码: {$subCode}" : "") . ")");
             }
             
+            // 记录查询成功的详细信息，特别是支付时间相关字段
             Log::info("支付宝订单查询成功", [
                 'order_number' => $orderNumber,
-                'trade_status' => $queryResponse['trade_status'] ?? ''
+                'trade_status' => $queryResponse['trade_status'] ?? '',
+                'gmt_payment' => $queryResponse['gmt_payment'] ?? 'NULL',
+                'gmt_create' => $queryResponse['gmt_create'] ?? 'NULL',
+                'send_pay_date' => $queryResponse['send_pay_date'] ?? 'NULL',
+                'all_response_keys' => array_keys($queryResponse),
+                'response_preview' => json_encode($queryResponse, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
             ]);
+            
+            // 优先使用 gmt_payment，如果没有则使用 send_pay_date，最后使用 gmt_create
+            $paymentTime = '';
+            if (!empty($queryResponse['gmt_payment'])) {
+                $paymentTime = $queryResponse['gmt_payment'];
+            } elseif (!empty($queryResponse['send_pay_date'])) {
+                $paymentTime = $queryResponse['send_pay_date'];
+            } elseif (!empty($queryResponse['gmt_create']) && 
+                      in_array($queryResponse['trade_status'] ?? '', ['TRADE_SUCCESS', 'TRADE_FINISHED'])) {
+                // 如果订单已支付但没有支付时间，使用创建时间（不推荐，但比没有好）
+                $paymentTime = $queryResponse['gmt_create'];
+                Log::warning("支付宝订单查询：使用gmt_create作为支付时间", [
+                    'order_number' => $orderNumber,
+                    'trade_status' => $queryResponse['trade_status'] ?? ''
+                ]);
+            }
+            
+            // 支付宝返回的buyer_id字段可能是buyer_user_id
+            $buyerId = $queryResponse['buyer_id'] ?? $queryResponse['buyer_user_id'] ?? '';
             
             return [
                 'order_number' => $queryResponse['out_trade_no'] ?? '',
@@ -109,12 +163,13 @@ class AlipayQueryService
                 'trade_status' => $queryResponse['trade_status'] ?? '',
                 'total_amount' => $queryResponse['total_amount'] ?? '0',
                 'receipt_amount' => $queryResponse['receipt_amount'] ?? '0',
-                'buyer_id' => $queryResponse['buyer_id'] ?? '',
+                'buyer_id' => $buyerId,  // 优先使用buyer_id，如果没有则使用buyer_user_id
                 'buyer_logon_id' => $queryResponse['buyer_logon_id'] ?? '',
                 'seller_id' => $queryResponse['seller_id'] ?? '',
                 'seller_email' => $queryResponse['seller_email'] ?? '',
-                'gmt_payment' => $queryResponse['gmt_payment'] ?? '',
+                'gmt_payment' => $paymentTime,  // 使用处理后的支付时间
                 'gmt_create' => $queryResponse['gmt_create'] ?? '',
+                'send_pay_date' => $queryResponse['send_pay_date'] ?? '',
                 'subject' => $queryResponse['subject'] ?? '',
                 'body' => $queryResponse['body'] ?? '',
                 'fund_bill_list' => $queryResponse['fund_bill_list'] ?? '',
