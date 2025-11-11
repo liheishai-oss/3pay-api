@@ -32,7 +32,6 @@ class OrderController
      * - product_code: 产品编号（4位，如9469）
      * - amount: 订单金额（元）
      * - subject: 订单标题（可选，默认：商品支付）
-     * - body: 订单描述（可选，默认：使用subject的值）
      * - notify_url: 异步通知地址（可选，使用商户配置的地址）
      * - return_url: 同步返回地址（可选，使用商户配置的地址）
      * - auth_code: 授权码（条码支付时必填）
@@ -147,7 +146,7 @@ class OrderController
             }
             
             // 验证签名（在设置默认值之前，使用原始参数）
-            // 注意：subject和body如果是空字符串，SignatureHelper会跳过它们，不会参与签名计算
+            // 注意：subject如果是空字符串，SignatureHelper会跳过它，不会参与签名计算
             if (!SignatureHelper::verify($params, $merchant->api_secret)) {
                 return $this->error('签名验证失败');
             }
@@ -155,7 +154,6 @@ class OrderController
             // 处理商品描述参数：如果没传递使用默认值（签名验证之后）
             $defaultSubject = '商品支付';
             $orderSubject = !empty($params['subject']) && trim($params['subject']) !== '' ? trim($params['subject']) : $defaultSubject;
-            $orderBody = !empty($params['body']) && trim($params['body']) !== '' ? trim($params['body']) : $orderSubject;
             
             // 验证订单金额
             $amount = floatval($params['amount']);
@@ -393,7 +391,7 @@ class OrderController
                     'subject_id' => $subject->id,
                     'order_amount' => $amount,
                     'subject' => $orderSubject,  // 订单标题（商品名称）
-                    'body' => $orderBody,        // 订单描述（商品描述）
+                    'body' => $orderSubject,     // 订单描述（使用subject的值）
                     'pay_status' => Order::PAY_STATUS_CREATED,
                     'notify_status' => Order::NOTIFY_STATUS_PENDING,
                     'notify_times' => 0,
@@ -401,7 +399,7 @@ class OrderController
                     'return_url' => $computedReturnUrl,
                     'client_ip' => $clientIp,
                     'expire_time' => $expireTime,
-                    'remark' => $orderBody,  // remark字段保存body的内容
+                    'remark' => $orderSubject,  // remark字段保存subject的内容
                 ]);
                 
                 // 节点5：订单数据持久化
