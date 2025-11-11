@@ -176,7 +176,6 @@
             <li><a href="#api">API接口</a></li>
             <li><a href="#create-order">创建订单</a></li>
             <li><a href="#query-order">查询订单</a></li>
-            <li><a href="#close-order">关闭订单</a></li>
             <li><a href="#notify">异步通知</a></li>
             <li><a href="#error-code">常见错误码</a></li>
             <li><a href="#support">技术支持</a></li>
@@ -420,58 +419,6 @@ api_secret: xyz789 (不参与参数排序，最后添加)</code></pre>
                 </tr>
             </tbody>
         </table>
-
-        <h3 id="close-order">3. 关闭订单</h3>
-        <p><strong>接口地址</strong>：<code>POST /api/v1/merchant/order/close</code></p>
-
-        <p><strong>请求参数</strong>：</p>
-        <table>
-            <thead>
-                <tr>
-                    <th>参数名</th>
-                    <th>类型</th>
-                    <th>必填</th>
-                    <th>说明</th>
-                </tr>
-            </thead>
-            <tbody>
-                <tr>
-                    <td>api_key</td>
-                    <td>string</td>
-                    <td>是</td>
-                    <td>API密钥</td>
-                </tr>
-                <tr>
-                    <td>merchant_order_no</td>
-                    <td>string</td>
-                    <td>否</td>
-                    <td>商户订单号（与platform_order_no二选一）</td>
-                </tr>
-                <tr>
-                    <td>platform_order_no</td>
-                    <td>string</td>
-                    <td>否</td>
-                    <td>平台订单号（与merchant_order_no二选一）</td>
-                </tr>
-                <tr>
-                    <td>sign</td>
-                    <td>string</td>
-                    <td>是</td>
-                    <td>签名</td>
-                </tr>
-            </tbody>
-        </table>
-
-        <p><strong>返回参数</strong>：</p>
-        <pre><code>{
-    "code": 0,
-    "msg": "订单关闭成功",
-    "data": []
-}</code></pre>
-
-        <div class="note">
-            <strong>注意</strong>：只有待支付状态的订单才能关闭。
-        </div>
 
         <h2 id="notify">异步通知</h2>
         
