@@ -33,3 +33,4 @@ func (o *Order) IsPaid() bool {
 	// PHP中 PAY_STATUS_PAID = 1
 	return o.PayStatus == 1
 }
+
