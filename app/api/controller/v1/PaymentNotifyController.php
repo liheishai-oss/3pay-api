@@ -51,7 +51,7 @@ class PaymentNotifyController
                     'buyer_id' => $params['buyer_id'] ?? '',
                     'buyer_logon_id' => $params['buyer_logon_id'] ?? '',
                     'receipt_amount' => $params['receipt_amount'] ?? $order->order_amount,
-                ]);
+                ], $request->getRealIp(), $request->header('user-agent', ''));
                 return 'success';
             }
             
@@ -146,7 +146,7 @@ class PaymentNotifyController
                     $request->getRealIp(), $request->header('user-agent', '')
                 );
                 // 更新订单状态（记录支付IP，从回调请求IP获取）
-                $this->updateOrderStatus($order, $params, $request->getRealIp());
+                $this->updateOrderStatus($order, $params, $request->getRealIp(), $request->header('user-agent', ''));
                 Log::info('支付通知处理成功', [
                     'order_no' => $params['out_trade_no'],
                     'trade_no' => $params['trade_no'] ?? ''
@@ -181,14 +181,16 @@ class PaymentNotifyController
      * 更新订单状态
      * @param Order $order 订单
      * @param array $notifyParams 通知参数
+     * @param string $payIp 支付IP
+     * @param string $userAgent 用户代理（可选）
      */
-    private function updateOrderStatus(Order $order, array $notifyParams, $payIp = '')
+    private function updateOrderStatus(Order $order, array $notifyParams, $payIp = '', $userAgent = '')
     {
         try {
             Db::beginTransaction();
 
             // 更新订单状态
-            $order->update([
+            $updateData = [
                 'pay_status' => Order::PAY_STATUS_PAID,
                 // 支付确认后仅标记待通知，实际通知成功后再置成功
                 'notify_status' => Order::NOTIFY_STATUS_PENDING,
@@ -197,50 +199,84 @@ class PaymentNotifyController
                 // 统一使用 pay_time 字段
                 'pay_time' => date('Y-m-d H:i:s'),
                 'pay_ip' => $payIp, // 记录支付IP
-                'trade_no' => $notifyParams['trade_no'] ?? '',
-                'buyer_id' => $notifyParams['buyer_id'] ?? '',
-                'buyer_logon_id' => $notifyParams['buyer_logon_id'] ?? '',
+                // 注意：order表中没有trade_no字段，使用alipay_order_no
+                'alipay_order_no' => $notifyParams['trade_no'] ?? $order->alipay_order_no ?? '',
+                // 'buyer_logon_id' => $notifyParams['buyer_logon_id'] ?? '', // 订单表没有buyer_logon_id字段
                 'receipt_amount' => $notifyParams['receipt_amount'] ?? $order->order_amount,
-            ]);
+            ];
+            
+            // 更新购买者UID：只在有值时才更新，如果为空则保留原值（避免覆盖）
+            if (!empty($notifyParams['buyer_id'])) {
+                $updateData['buyer_id'] = $notifyParams['buyer_id'];
+                Log::info('支付回调：更新购买者UID', [
+                    'order_id' => $order->id,
+                    'platform_order_no' => $order->platform_order_no,
+                    'old_buyer_id' => $order->buyer_id,
+                    'new_buyer_id' => $notifyParams['buyer_id']
+                ]);
+            } elseif (empty($order->buyer_id)) {
+                // 如果订单中也没有buyer_id，记录警告
+                Log::warning('支付回调：buyer_id为空，且订单中也没有buyer_id', [
+                    'order_id' => $order->id,
+                    'platform_order_no' => $order->platform_order_no,
+                    'notify_params_keys' => array_keys($notifyParams)
+                ]);
+            }
+            
+            $order->update($updateData);
 
             // 发送商户通知（成功后回写 SUCCESS），自动回调不绕过熔断
             \app\service\MerchantNotifyService::send($order, $notifyParams, ['manual' => false]);
 
             Db::commit();
 
-            // 订单支付成功后，触发分账（异步处理，不阻塞回调响应）
+            // 订单支付成功后，将订单加入分账队列（秒级异步处理，不阻塞回调响应）
             try {
                 // 刷新订单数据以获取最新状态
                 $order->refresh();
-                // 触发分账处理
-                \app\service\royalty\RoyaltyService::processRoyalty(
-                    $order,
-                    $request->getRealIp(),
-                    $request->header('user-agent', '')
-                );
-            } catch (\Exception $e) {
-                // 分账失败不影响支付回调结果，只记录日志
-                Log::error('支付回调后分账处理失败', [
+                
+                // 将订单ID加入Redis分账队列
+                $queueKey = \app\common\constants\CacheKeys::getRoyaltyQueueKey();
+                $queueData = json_encode([
                     'order_id' => $order->id,
-                    'platform_order_no' => $order->platform_order_no,
-                    'error' => $e->getMessage()
+                    'operator_ip' => $payIp,
+                    'operator_agent' => $userAgent ?: 'PaymentNotify',
+                    'timestamp' => time()
                 ]);
                 
+                \support\Redis::lpush($queueKey, $queueData);
+                
+                // 记录分账队列日志
                 \app\service\OrderLogService::log(
                     $order->trace_id ?? '',
                     $order->platform_order_no,
                     $order->merchant_order_no,
                     '分账处理',
-                    'WARN',
-                    '节点35-分账处理异常',
+                    'INFO',
+                    '节点34-分账入队',
                     [
-                        'action' => '支付回调后分账处理失败',
-                        'error' => $e->getMessage(),
-                        'operator_ip' => $request->getRealIp()
+                        'action' => '支付回调后将订单加入分账队列，将由分账进程秒级处理',
+                        'pay_status' => $order->pay_status,
+                        'subject_id' => $order->subject_id,
+                        'note' => '分账将由OrderAutoRoyalty进程秒级处理（每1秒检查队列），不阻塞回调响应',
+                        'operator_ip' => $payIp
                     ],
-                    $request->getRealIp(),
-                    $request->header('user-agent', '')
+                    $payIp,
+                    $userAgent
                 );
+                
+                Log::info('支付回调后已将订单加入分账队列', [
+                    'order_id' => $order->id,
+                    'platform_order_no' => $order->platform_order_no,
+                    'note' => '分账将由OrderAutoRoyalty进程秒级处理'
+                ]);
+            } catch (\Exception $e) {
+                // 入队失败不影响支付回调结果，只记录日志
+                Log::warning('支付回调后加入分账队列失败', [
+                    'order_id' => $order->id,
+                    'platform_order_no' => $order->platform_order_no,
+                    'error' => $e->getMessage()
+                ]);
             }
 
         } catch (\Exception $e) {

@@ -24,8 +24,10 @@ const (
 type Complaint struct {
 	ID               uint       `gorm:"column:id;primaryKey" json:"id"`
 	SubjectID        int        `gorm:"column:subject_id;not null;index:idx_subject_id" json:"subject_id"`
-	AgentID          int        `gorm:"column:agent_id;index:idx_agent_id" json:"agent_id"` // 代理商ID（从订单号提取）
-	ComplaintNo      string     `gorm:"column:complaint_no;not null;size:64;uniqueIndex:uniq_subject_complaint" json:"complaint_no"`
+	AgentID          int        `gorm:"column:agent_id;index:idx_agent_id" json:"agent_id"`                                                // 代理商ID（从订单号提取）
+	ComplaintNo      string     `gorm:"column:complaint_no;not null;size:64;index:idx_complaint_no" json:"complaint_no"`                   // 被投诉的订单号（OutTradeNo）
+	AlipayTaskId     string     `gorm:"column:alipay_task_id;not null;size:64;uniqueIndex:uniq_subject_alipay_task" json:"alipay_task_id"` // 支付宝投诉单号（TaskId）
+	AlipayComplainId int64      `gorm:"column:alipay_complain_id;not null;default:0;index:idx_alipay_complain_id" json:"alipay_complain_id"` // 支付宝投诉主表ID（complaint_list中的id，用于调用完结投诉API）
 	ComplaintStatus  string     `gorm:"column:complaint_status;size:20;index:idx_status" json:"complaint_status"`
 	ComplainantID    string     `gorm:"column:complainant_id;size:64;index:idx_complainant_id" json:"complainant_id"` // 投诉人支付宝用户ID
 	ComplaintTime    *time.Time `gorm:"column:complaint_time;index:idx_complaint_time" json:"complaint_time"`
@@ -50,8 +52,9 @@ func (Complaint) TableName() string {
 }
 
 // GetComplaintKey 获取投诉唯一键（用于锁）
+// 使用支付宝投诉单号（TaskId）作为唯一键
 func (c *Complaint) GetComplaintKey() string {
-	return c.ComplaintNo
+	return c.AlipayTaskId
 }
 
 // IsProcessing 是否处理中（待处理或处理中）

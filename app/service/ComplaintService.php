@@ -176,8 +176,11 @@ class ComplaintService
                 'queried_count' => count($orderQueryResults)
             ]);
 
-            // 3.5 如果查询成功且退款金额>0，检查是否已退款，如果未退款则进行退款
+            // 3.5 处理退款和完结投诉
             $refundResult = null;
+            $finishComplaintResult = null;
+            
+            // 如果退款金额>0，进行退款处理
             if ($refundAmount > 0 && !empty($orderQueryResults)) {
                 $firstQueryResult = $orderQueryResults[0];
                 if ($firstQueryResult['success'] && !empty($firstQueryResult['order_info'])) {
@@ -251,6 +254,11 @@ class ComplaintService
                             'order_info' => $orderInfo
                         ]);
                     }
+                } else {
+                    Log::warning('投诉处理：订单查询失败，无法处理退款', [
+                        'complaint_id' => $complaintId,
+                        'query_results' => $orderQueryResults
+                    ]);
                 }
             } else {
                 if ($refundAmount <= 0) {
@@ -258,6 +266,13 @@ class ComplaintService
                         'complaint_id' => $complaintId,
                         'refund_amount' => $refundAmount
                     ]);
+                    // 退款金额为0，不需要退款，但需要设置refundResult为成功
+                    $refundResult = [
+                        'success' => true,
+                        'message' => '退款金额为0，无需退款',
+                        'refund_amount' => 0,
+                        'skipped' => true
+                    ];
                 } else {
                     Log::warning('投诉处理：订单查询失败，无法处理退款', [
                         'complaint_id' => $complaintId,
@@ -265,13 +280,358 @@ class ComplaintService
                     ]);
                 }
             }
+            
+            // 3.6 退款成功（或退款金额为0）后，调用支付宝完结投诉API
+            // 注意：即使订单查询失败，如果退款金额为0，也应该完结投诉
+            // 使用 alipay_complain_id（complaint_list中的id）调用完结投诉API，而不是 alipay_task_id
+            $alipayComplainId = $complaint->alipay_complain_id ?? 0;
+            if ($alipayComplainId > 0) {
+                // 只有在退款成功、退款金额为0，或者退款金额>0但订单查询失败时，才尝试完结投诉
+                $shouldFinishComplaint = false;
+                if ($refundAmount <= 0) {
+                    // 退款金额为0，直接完结投诉
+                    $shouldFinishComplaint = true;
+                    if (!$refundResult) {
+                        $refundResult = [
+                            'success' => true,
+                            'message' => '退款金额为0，无需退款',
+                            'refund_amount' => 0,
+                            'skipped' => true
+                        ];
+                    }
+                } elseif ($refundResult && $refundResult['success']) {
+                    // 退款成功，完结投诉
+                    $shouldFinishComplaint = true;
+                }
+                
+                if ($shouldFinishComplaint) {
+                    try {
+                        Log::info('投诉处理：开始完结投诉', [
+                            'complaint_id' => $complaintId,
+                            'alipay_complain_id' => $alipayComplainId,
+                            'alipay_task_id' => $complaint->alipay_task_id,
+                            'process_code' => $processCode,
+                            'feedback' => $feedback,
+                            'refund_amount' => $refundAmount,
+                            'refund_success' => $refundResult['success'] ?? false
+                        ]);
+                        
+                        // 调用完结投诉API，传入process_code和remark（feedback）
+                        $finishResult = AlipayComplaintService::finishComplaint($subject, $alipayComplainId, $complaint->alipay_task_id, $processCode, $feedback);
+                        
+                        Log::info('投诉处理：完结投诉成功', [
+                            'complaint_id' => $complaintId,
+                            'alipay_complain_id' => $alipayComplainId,
+                            'alipay_task_id' => $complaint->alipay_task_id,
+                            'finish_result' => $finishResult
+                        ]);
+                        
+                        // 将完结结果添加到退款结果中
+                        if ($refundResult) {
+                            $refundResult['finish_complaint'] = [
+                                'success' => true,
+                                'result' => $finishResult
+                            ];
+                        } else {
+                            $refundResult = [
+                                'success' => true,
+                                'finish_complaint' => [
+                                    'success' => true,
+                                    'result' => $finishResult
+                                ]
+                            ];
+                        }
+                        $finishComplaintResult = $finishResult;
+                        
+                    } catch (Exception $e) {
+                        // 完结投诉失败，记录详细错误信息
+                        $errorMessage = $e->getMessage();
+                        $errorDetails = [
+                            'complaint_id' => $complaintId,
+                            'alipay_complain_id' => $alipayComplainId,
+                            'alipay_task_id' => $complaint->alipay_task_id,
+                            'subject_id' => $subject->id,
+                            'feedback' => $feedback,
+                            'refund_amount' => $refundAmount,
+                            'error' => $errorMessage,
+                            'error_class' => get_class($e),
+                            'trace' => $e->getTraceAsString()
+                        ];
+                        
+                        // 尝试从异常消息中提取更详细的信息
+                        if (strpos($errorMessage, 'sub_code') !== false) {
+                            // 提取sub_code
+                            if (preg_match('/sub_code:\s*([^\s\)]+)/', $errorMessage, $matches)) {
+                                $errorDetails['alipay_sub_code'] = $matches[1];
+                            }
+                        }
+                        
+                        Log::error('投诉处理：完结投诉失败', $errorDetails);
+                        
+                        // 将完结失败信息添加到退款结果中
+                        if ($refundResult) {
+                            $refundResult['finish_complaint'] = [
+                                'success' => false,
+                                'error' => $errorMessage,
+                                'error_details' => $errorDetails
+                            ];
+                        } else {
+                            $refundResult = [
+                                'success' => false,
+                                'finish_complaint' => [
+                                    'success' => false,
+                                    'error' => $errorMessage,
+                                    'error_details' => $errorDetails
+                                ]
+                            ];
+                        }
+                        $finishComplaintResult = [
+                            'success' => false,
+                            'error' => $errorMessage,
+                            'error_details' => $errorDetails
+                        ];
+                        
+                        // 注意：完结投诉失败不影响退款结果，但会影响状态更新
+                        // 状态更新需要同时满足退款成功（或跳过）和完结投诉成功
+                    }
+                } else {
+                    Log::info('投诉处理：退款未成功或退款金额>0但订单查询失败，跳过完结投诉', [
+                        'complaint_id' => $complaintId,
+                        'refund_amount' => $refundAmount,
+                        'refund_result' => $refundResult,
+                        'note' => '只有退款成功或退款金额为0时才完结投诉'
+                    ]);
+                }
+            } else {
+                Log::warning('投诉处理：alipay_complain_id为空或无效，无法完结投诉', [
+                    'complaint_id' => $complaintId,
+                    'alipay_complain_id' => $alipayComplainId,
+                    'alipay_task_id' => $complaint->alipay_task_id ?? '',
+                    'note' => '需要使用complaint_list中的id字段（alipay_complain_id）调用完结投诉API，请检查数据是否已同步'
+                ]);
+                // alipay_complain_id为空时，无法完结投诉，不应该更新状态为PROCESSED
+                // 设置finishComplaintResult为失败，确保状态不会被更新
+                $finishComplaintResult = [
+                    'success' => false,
+                    'error' => 'alipay_complain_id为空或无效，无法完结投诉'
+                ];
+            }
 
             // 返回查询和退款结果
+            // 注意：只有退款成功（或跳过）且完结投诉成功时，才返回成功
+            $messageParts = [];
+            $isReallySuccess = false;
+            
+            // 订单查询结果
+            if (!empty($orderQueryResults)) {
+                $successCount = 0;
+                foreach ($orderQueryResults as $queryResult) {
+                    if ($queryResult['success'] ?? false) {
+                        $successCount++;
+                    }
+                }
+                if ($successCount > 0) {
+                    $messageParts[] = "成功查询{$successCount}个订单";
+                }
+            }
+            
+            // 退款结果
+            if ($refundResult) {
+                if (isset($refundResult['skipped']) && $refundResult['skipped']) {
+                    // 退款金额为0，跳过退款
+                    $messageParts[] = '退款金额为0，无需退款';
+                } elseif ($refundResult['success']) {
+                    // 退款成功
+                    $refundAmount = $refundResult['refund_amount'] ?? 0;
+                    if ($refundAmount > 0) {
+                        $messageParts[] = "退款成功，金额：{$refundAmount}元";
+                    } else {
+                        $messageParts[] = '退款处理完成';
+                    }
+                } else {
+                    // 退款失败
+                    $errorMsg = $refundResult['message'] ?? '未知错误';
+                    $messageParts[] = "退款失败：{$errorMsg}";
+                }
+                
+                // 检查完结投诉结果
+                if (isset($refundResult['finish_complaint'])) {
+                    if ($refundResult['finish_complaint']['success']) {
+                        $messageParts[] = '投诉已完结';
+                        // 只有退款成功（或跳过）且完结投诉成功时，才算真正成功
+                        $refundOk = ($refundResult['success'] ?? false) || (isset($refundResult['skipped']) && $refundResult['skipped']);
+                        $finishOk = $refundResult['finish_complaint']['success'] ?? false;
+                        $isReallySuccess = $refundOk && $finishOk;
+                    } else {
+                        $errorMsg = $refundResult['finish_complaint']['error'] ?? '未知错误';
+                        $messageParts[] = "投诉完结失败：{$errorMsg}";
+                        $isReallySuccess = false;
+                    }
+                } elseif (!isset($refundResult['skipped'])) {
+                    // 如果有退款结果但没有完结投诉结果，且不是跳过退款的情况
+                    $messageParts[] = '投诉未完结';
+                    $isReallySuccess = false;
+                } else {
+                    // 退款金额为0，跳过退款，但没有完结投诉结果
+                    $isReallySuccess = false;
+                }
+            } elseif ($refundAmount <= 0) {
+                // 退款金额为0，但没有refundResult的情况
+                $messageParts[] = '退款金额为0，无需退款';
+                // 需要检查是否有完结投诉结果
+                if (!empty($finishComplaintResult) && ($finishComplaintResult['success'] ?? false)) {
+                    $messageParts[] = '投诉已完结';
+                    $isReallySuccess = true;
+                } else {
+                    $messageParts[] = '投诉未完结';
+                    $isReallySuccess = false;
+                }
+            }
+            
+            $successMessage = !empty($messageParts) ? implode('；', $messageParts) : '投诉处理完成';
+            
+            // 如果投诉未真正处理完成，返回失败
+            if (!$isReallySuccess && $shouldUpdateStatus === false) {
+                $successMessage = '投诉处理失败：' . $successMessage;
+            }
+            
+            // 4. 更新投诉记录状态（处理成功后才更新）
+            // 只有在退款成功或退款金额为0，且完结投诉成功的情况下，才更新状态为PROCESSED
+            $shouldUpdateStatus = false;
+            $updateData = [
+                'updated_at' => date('Y-m-d H:i:s')
+            ];
+            
+            // 检查是否应该更新状态
+            // 只有在退款成功（或退款金额为0）且完结投诉成功的情况下，才更新状态为PROCESSED
+            $refundSuccess = false;
+            $refundSkipped = false;
+            $finishSuccess = false;
+            
+            // 检查退款结果
+            if ($refundResult) {
+                $refundSuccess = $refundResult['success'] ?? false;
+                $refundSkipped = $refundResult['skipped'] ?? false;
+            } elseif ($refundAmount <= 0) {
+                // 退款金额为0，视为跳过退款
+                $refundSkipped = true;
+            }
+            
+            // 检查完结投诉结果
+            if (isset($refundResult['finish_complaint'])) {
+                $finishSuccess = $refundResult['finish_complaint']['success'] ?? false;
+                // 额外检查complaint_process_success字段（如果存在）
+                if ($finishSuccess && isset($refundResult['finish_complaint']['result']['data']['complaint_process_success'])) {
+                    $finishSuccess = (bool)$refundResult['finish_complaint']['result']['data']['complaint_process_success'];
+                }
+            } elseif ($finishComplaintResult) {
+                $finishSuccess = $finishComplaintResult['success'] ?? false;
+                // 额外检查complaint_process_success字段（如果存在）
+                if ($finishSuccess && isset($finishComplaintResult['data']['complaint_process_success'])) {
+                    $finishSuccess = (bool)$finishComplaintResult['data']['complaint_process_success'];
+                }
+            }
+            
+            Log::info('投诉处理：状态更新条件检查', [
+                'complaint_id' => $complaintId,
+                'refund_success' => $refundSuccess,
+                'refund_skipped' => $refundSkipped,
+                'finish_success' => $finishSuccess,
+                'refund_amount' => $refundAmount,
+                'has_refund_result' => !empty($refundResult),
+                'has_finish_complaint_result' => !empty($finishComplaintResult),
+                'note' => '只有退款成功（或跳过）且完结投诉成功时才更新状态为PROCESSED'
+            ]);
+            
+            // 如果退款成功（或跳过）且完结投诉成功，则更新状态
+            if (($refundSuccess || $refundSkipped) && $finishSuccess) {
+                $shouldUpdateStatus = true;
+                $updateData['complaint_status'] = 'PROCESSED';
+                $updateData['process_code'] = $processCode; // 保存处理结果码
+                $updateData['merchant_feedback'] = $feedback;
+                $updateData['feedback_time'] = date('Y-m-d H:i:s');
+                $updateData['handler_id'] = $handlerId;
+                if ($refundAmount > 0 && $refundSuccess) {
+                    // 累计退款金额：获取当前退款金额，加上本次退款金额
+                    $currentRefundAmount = floatval($complaint->refund_amount ?? 0);
+                    $newRefundAmount = $currentRefundAmount + $refundAmount;
+                    // 获取投诉总金额（从详情表聚合）
+                    $totalComplaintAmount = Db::table('alipay_complaint_detail')
+                        ->where('complaint_id', $complaintId)
+                        ->sum('complaint_amount');
+                    $totalComplaintAmount = floatval($totalComplaintAmount ?? 0);
+                    // 确保累计退款金额不超过投诉总金额
+                    $newRefundAmount = min($newRefundAmount, $totalComplaintAmount);
+                    $updateData['refund_amount'] = $newRefundAmount;
+                    
+                    Log::info('投诉处理：累计更新退款金额', [
+                        'complaint_id' => $complaintId,
+                        'current_refund_amount' => $currentRefundAmount,
+                        'this_refund_amount' => $refundAmount,
+                        'new_refund_amount' => $newRefundAmount,
+                        'total_complaint_amount' => $totalComplaintAmount
+                    ]);
+                }
+            } else {
+                // 不满足更新条件，记录详细日志
+                Log::warning('投诉处理：未满足更新状态条件，投诉未真正处理完成', [
+                    'complaint_id' => $complaintId,
+                    'refund_success' => $refundSuccess,
+                    'refund_skipped' => $refundSkipped,
+                    'finish_success' => $finishSuccess,
+                    'refund_amount' => $refundAmount,
+                    'refund_result' => $refundResult,
+                    'finish_complaint_result' => $finishComplaintResult,
+                    'note' => '只有退款成功（或退款金额为0）且完结投诉成功时才更新状态为PROCESSED。当前状态：退款=' . ($refundSuccess ? '成功' : ($refundSkipped ? '跳过' : '失败')) . '，完结=' . ($finishSuccess ? '成功' : '失败')
+                ]);
+            }
+            
+            // 更新数据库
+            if ($shouldUpdateStatus) {
+                try {
+                    Db::table('alipay_complaint')
+                        ->where('id', $complaintId)
+                        ->update($updateData);
+                    
+                    Log::info('投诉处理：更新投诉状态成功', [
+                        'complaint_id' => $complaintId,
+                        'status' => 'PROCESSED',
+                        'refund_amount' => $updateData['refund_amount'] ?? $refundAmount,
+                        'current_refund_amount' => $updateData['refund_amount'] ?? 0,
+                        'handler_id' => $handlerId
+                    ]);
+                } catch (Exception $e) {
+                    Log::error('投诉处理：更新投诉状态失败', [
+                        'complaint_id' => $complaintId,
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString()
+                    ]);
+                    // 状态更新失败不影响处理结果，只记录日志
+                }
+            } else {
+                Log::warning('投诉处理：未满足更新状态条件', [
+                    'complaint_id' => $complaintId,
+                    'refund_result' => $refundResult,
+                    'finish_complaint_result' => $finishComplaintResult,
+                    'refund_amount' => $refundAmount,
+                    'note' => '只有退款成功（或退款金额为0）且完结投诉成功时才更新状态'
+                ]);
+            }
+            
+            // 返回处理结果
+            // 只有退款成功（或跳过）且完结投诉成功时，才返回success: true
+            // 如果状态未更新（shouldUpdateStatus = false），说明投诉未真正处理完成，应该返回失败
+            $returnSuccess = $shouldUpdateStatus; // 只有状态更新为PROCESSED时，才算真正成功
+            
             return [
-                'success' => true,
-                'message' => '订单查询完成' . ($refundResult ? ($refundResult['success'] ? '，退款处理完成' : '，退款处理失败') : ''),
+                'success' => $returnSuccess,
+                'message' => $successMessage,
                 'query_results' => $orderQueryResults,
-                'refund_result' => $refundResult
+                'refund_result' => $refundResult,
+                'finish_complaint_result' => $finishComplaintResult,
+                'status_updated' => $shouldUpdateStatus,
+                'refund_success' => $refundSuccess || $refundSkipped,
+                'finish_success' => $finishSuccess
             ];
 
             /* ========== 以下代码暂时注释，仅用于查询订单状态 ==========
@@ -370,9 +730,33 @@ class ComplaintService
             }
 
             // 7. 更新投诉记录
+            // 累计更新退款金额
+            $currentRefundAmount = floatval($complaint->refund_amount ?? 0);
+            $newRefundAmount = $currentRefundAmount;
+            if ($refundAmountToProcess > 0 && $refundResult && $refundResult['success']) {
+                // 如果退款成功，累计退款金额
+                $newRefundAmount = $currentRefundAmount + $refundAmountToProcess;
+                // 获取投诉总金额（从详情表聚合）
+                $totalComplaintAmount = Db::table('alipay_complaint_detail')
+                    ->where('complaint_id', $complaintId)
+                    ->sum('complaint_amount');
+                $totalComplaintAmount = floatval($totalComplaintAmount ?? 0);
+                // 确保累计退款金额不超过投诉总金额
+                $newRefundAmount = min($newRefundAmount, $totalComplaintAmount);
+                
+                Log::info('投诉处理：累计更新退款金额（路径2）', [
+                    'complaint_id' => $complaintId,
+                    'current_refund_amount' => $currentRefundAmount,
+                    'this_refund_amount' => $refundAmountToProcess,
+                    'new_refund_amount' => $newRefundAmount,
+                    'total_complaint_amount' => $totalComplaintAmount
+                ]);
+            }
+            
             Db::table('alipay_complaint')->where('id', $complaintId)->update([
                 'complaint_status' => 'PROCESSED',
-                'refund_amount' => $refundAmountToProcess,
+                'process_code' => $processCode, // 保存处理结果码
+                'refund_amount' => $newRefundAmount,
                 'merchant_feedback' => $feedback,
                 'feedback_time' => date('Y-m-d H:i:s'),
                 'handler_id' => $handlerId,

@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>百亿三方支付 - 商户API对接文档</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+            display: flex;
+        }
+        .sidebar {
+            width: 250px;
+            background: #fff;
+            border-right: 1px solid #e8e8e8;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+            padding: 20px 0;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.1);
+        }
+        .sidebar h2 {
+            padding: 0 20px;
+            margin-bottom: 20px;
+            color: #1890ff;
+            font-size: 18px;
+            border-bottom: 2px solid #1890ff;
+            padding-bottom: 10px;
+        }
+        .sidebar ul {
+            list-style: none;
+        }
+        .sidebar li {
+            margin: 0;
+        }
+        .sidebar a {
+            display: block;
+            padding: 10px 20px;
+            color: #666;
+            text-decoration: none;
+            transition: all 0.3s;
+            border-left: 3px solid transparent;
+        }
+        .sidebar a:hover {
+            background: #f0f7ff;
+            color: #1890ff;
+            border-left-color: #1890ff;
+        }
+        .sidebar a.active {
+            background: #e6f7ff;
+            color: #1890ff;
+            border-left-color: #1890ff;
+            font-weight: 600;
+        }
+        .container {
+            flex: 1;
+            margin-left: 250px;
+            padding: 40px;
+            max-width: 1200px;
+            background: #fff;
+            min-height: 100vh;
+        }
+        h1 {
+            color: #1890ff;
+            border-bottom: 3px solid #1890ff;
+            padding-bottom: 10px;
+            margin-bottom: 30px;
+        }
+        h2 {
+            color: #333;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            padding-left: 10px;
+            border-left: 4px solid #1890ff;
+            scroll-margin-top: 20px;
+        }
+        h3 {
+            color: #666;
+            margin-top: 30px;
+            margin-bottom: 15px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: #fff;
+        }
+        th, td {
+            border: 1px solid #e8e8e8;
+            padding: 12px;
+            text-align: left;
+        }
+        th {
+            background: #fafafa;
+            font-weight: 600;
+            color: #333;
+        }
+        tr:nth-child(even) {
+            background: #fafafa;
+        }
+        code {
+            background: #f5f5f5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: "Courier New", monospace;
+            font-size: 0.9em;
+            color: #e83e8c;
+        }
+        pre {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            margin: 15px 0;
+            border-left: 4px solid #1890ff;
+        }
+        pre code {
+            background: none;
+            padding: 0;
+            color: #333;
+        }
+        ul, ol {
+            margin: 15px 0;
+            padding-left: 30px;
+        }
+        li {
+            margin: 8px 0;
+        }
+        .note {
+            background: #e6f7ff;
+            border-left: 4px solid #1890ff;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .warning {
+            background: #fff7e6;
+            border-left: 4px solid #faad14;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        .success {
+            background: #f6ffed;
+            border-left: 4px solid #52c41a;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 200px;
+            }
+            .container {
+                margin-left: 200px;
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="sidebar">
+        <h2>文档目录</h2>
+        <ul>
+            <li><a href="#overview">概述</a></li>
+            <li><a href="#preparation">接入准备</a></li>
+            <li><a href="#signature">签名规则</a></li>
+            <li><a href="#api">API接口</a></li>
+            <li><a href="#create-order">创建订单</a></li>
+            <li><a href="#query-order">查询订单</a></li>
+            <li><a href="#close-order">关闭订单</a></li>
+            <li><a href="#notify">异步通知</a></li>
+            <li><a href="#error-code">常见错误码</a></li>
+            <li><a href="#support">技术支持</a></li>
+        </ul>
+    </nav>
+
+    <div class="container">
+        <h1>百亿三方支付 - 商户API对接文档</h1>
+
+        <h2 id="overview">概述</h2>
+
+        <h2 id="preparation">接入准备</h2>
+        <p>在开始对接前，您需要：</p>
+        <ol>
+            <li>获取商户账号（由客服创建）</li>
+            <li>获取API密钥对：
+                <ul>
+                    <li><code>api_key</code>: API密钥（用于身份识别）</li>
+                    <li><code>api_secret</code>: API密钥Secret（用于签名验证，请妥善保管）</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h2 id="signature">签名规则</h2>
+        
+        <h3>签名生成步骤</h3>
+        <ol>
+            <li>将所有请求参数（<strong>除sign外</strong>）按照参数名ASCII码升序排序</li>
+            <li>按照<code>key=value&</code>格式拼接参数</li>
+            <li>在拼接字符串末尾添加<code>key=api_secret</code></li>
+            <li>对拼接后的字符串进行MD5加密</li>
+            <li>将MD5结果转换为大写字母</li>
+        </ol>
+
+        <h3>签名示例</h3>
+        <p>假设请求参数如下：</p>
+        <pre><code>api_key: ABC123
+merchant_order_no: M202501220001
+product_code: 1001
+amount: 100.00
+subject: 测试订单
+api_secret: xyz789 (不参与参数排序，最后添加)</code></pre>
+
+        <p>签名步骤：</p>
+        <ol>
+            <li>参数排序后：amount, api_key, merchant_order_no, product_code, subject</li>
+            <li>拼接字符串：<code>amount=100.00&api_key=ABC123&merchant_order_no=M202501220001&product_code=1001&subject=测试订单&key=xyz789</code></li>
+            <li>MD5加密并转大写：<code>sign = MD5(拼接字符串).toUpperCase()</code></li>
+        </ol>
+
+        <h3>PHP示例代码</h3>
+        <pre><code>function generateSign($params, $apiSecret) {
+    // 移除sign参数
+    unset($params['sign']);
+    
+    // 按key升序排序
+    ksort($params);
+    
+    // 拼接字符串
+    $signStr = '';
+    foreach ($params as $key => $value) {
+        if ($value !== '' && $value !== null) {
+            $signStr .= $key . '=' . $value . '&';
+        }
+    }
+    
+    // 加上api_secret
+    $signStr .= 'key=' . $apiSecret;
+    
+    // MD5加密并转大写
+    return strtoupper(md5($signStr));
+}</code></pre>
+
+        <h2 id="api">API接口</h2>
+
+        <h3 id="create-order">1. 创建订单</h3>
+        <p><strong>接口地址</strong>：<code>POST /api/v1/merchant/order/create</code></p>
+
+        <p><strong>请求参数</strong>：</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>参数名</th>
+                    <th>类型</th>
+                    <th>必填</th>
+                    <th>说明</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>api_key</td>
+                    <td>string</td>
+                    <td>是</td>
+                    <td>API密钥</td>
+                </tr>
+                <tr>
+                    <td>merchant_order_no</td>
+                    <td>string</td>
+                    <td>是</td>
+                    <td>商户订单号（商户系统唯一）</td>
+                </tr>
+                <tr>
+                    <td>product_code</td>
+                    <td>string</td>
+                    <td>是</td>
+                    <td>产品编号（4位数字）</td>
+                </tr>
+                <tr>
+                    <td>amount</td>
+                    <td>decimal</td>
+                    <td>是</td>
+                    <td>订单金额（元，保留2位小数）</td>
+                </tr>
+                <tr>
+                    <td>subject</td>
+                    <td>string</td>
+                    <td>否</td>
+                    <td>订单标题（可选，默认：商品支付）</td>
+                </tr>
+                <tr>
+                    <td>body</td>
+                    <td>string</td>
+                    <td>否</td>
+                    <td>订单描述（可选，默认：使用subject的值）</td>
+                </tr>
+                <tr>
+                    <td>notify_url</td>
+                    <td>string</td>
+                    <td>否</td>
+                    <td>异步通知地址（可选，不传使用商户配置的地址）</td>
+                </tr>
+                <tr>
+                    <td>return_url</td>
+                    <td>string</td>
+                    <td>否</td>
+                    <td>同步返回地址（可选，不传使用商户配置的地址）</td>
+                </tr>
+                <tr>
+                    <td>sign</td>
+                    <td>string</td>
+                    <td>是</td>
+                    <td>签名</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p><strong>返回参数</strong>：</p>
+        <pre><code>{
+    "code": 0,
+    "msg": "订单创建成功",
+    "data": {
+        "platform_order_no": "BY20250122153045A1B21234",
+        "merchant_order_no": "M202501220001",
+        "amount": 100.00,
+        "expire_time": "2025-01-22 16:00:45",
+        "payment_url": "https://pay.example.com/alipay?order_no=BY20250122153045A1B21234"
+    }
+}</code></pre>
+
+        <h3 id="query-order">2. 查询订单</h3>
+        <p><strong>接口地址</strong>：<code>POST /api/v1/merchant/order/query</code> 或 <code>GET /api/v1/merchant/order/query</code></p>
+
+        <p><strong>请求参数</strong>：</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>参数名</th>
+                    <th>类型</th>
+                    <th>必填</th>
+                    <th>说明</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>api_key</td>
+                    <td>string</td>
+                    <td>是</td>
+                    <td>API密钥</td>
+                </tr>
+                <tr>
+                    <td>merchant_order_no</td>
+                    <td>string</td>
+                    <td>否</td>
+                    <td>商户订单号（与platform_order_no二选一）</td>
+                </tr>
+                <tr>
+                    <td>platform_order_no</td>
+                    <td>string</td>
+                    <td>否</td>
+                    <td>平台订单号（与merchant_order_no二选一）</td>
+                </tr>
+                <tr>
+                    <td>sign</td>
+                    <td>string</td>
+                    <td>是</td>
+                    <td>签名</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p><strong>返回参数</strong>：</p>
+        <pre><code>{
+    "code": 0,
+    "msg": "查询成功",
+    "data": {
+        "platform_order_no": "BY20250122153045A1B21234",
+        "merchant_order_no": "M202501220001",
+        "alipay_order_no": "2025012222001234567890",
+        "order_amount": 100.00,
+        "pay_status": 1,
+        "pay_status_text": "已支付",
+        "pay_time": "2025-01-22 15:35:20",
+        "created_at": "2025-01-22 15:30:45"
+    }
+}</code></pre>
+
+        <p><strong>支付状态说明</strong>：</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>状态值</th>
+                    <th>说明</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>0</td>
+                    <td>待支付</td>
+                </tr>
+                <tr>
+                    <td>1</td>
+                    <td>已支付</td>
+                </tr>
+                <tr>
+                    <td>2</td>
+                    <td>已关闭</td>
+                </tr>
+                <tr>
+                    <td>3</td>
+                    <td>已退款</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3 id="close-order">3. 关闭订单</h3>
+        <p><strong>接口地址</strong>：<code>POST /api/v1/merchant/order/close</code></p>
+
+        <p><strong>请求参数</strong>：</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>参数名</th>
+                    <th>类型</th>
+                    <th>必填</th>
+                    <th>说明</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>api_key</td>
+                    <td>string</td>
+                    <td>是</td>
+                    <td>API密钥</td>
+                </tr>
+                <tr>
+                    <td>merchant_order_no</td>
+                    <td>string</td>
+                    <td>否</td>
+                    <td>商户订单号（与platform_order_no二选一）</td>
+                </tr>
+                <tr>
+                    <td>platform_order_no</td>
+                    <td>string</td>
+                    <td>否</td>
+                    <td>平台订单号（与merchant_order_no二选一）</td>
+                </tr>
+                <tr>
+                    <td>sign</td>
+                    <td>string</td>
+                    <td>是</td>
+                    <td>签名</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p><strong>返回参数</strong>：</p>
+        <pre><code>{
+    "code": 0,
+    "msg": "订单关闭成功",
+    "data": []
+}</code></pre>
+
+        <div class="note">
+            <strong>注意</strong>：只有待支付状态的订单才能关闭。
+        </div>
+
+        <h2 id="notify">异步通知</h2>
+        
+        <h3>通知说明</h3>
+        <p>订单支付成功后，系统会向商户配置的<code>notify_url</code>发送POST请求通知。</p>
+
+        <h3>回调说明</h3>
+        <ul>
+            <li>支付成功后系统会主动回调商户的notify_url</li>
+            <li>回调参数包含订单状态和签名信息</li>
+            <li>商户收到回调后需要返回"success"字符串确认（不区分大小写）</li>
+            <li>HTTP状态码必须返回200，响应内容必须为"SUCCESS"</li>
+        </ul>
+
+        <h3>熔断机制</h3>
+        <ul>
+            <li>连续超时5次：如果商户回调接口连续5次超时（超过10秒未响应），系统将触发熔断，暂停自动回调5分钟</li>
+            <li>连续非期望响应5次：如果商户回调接口连续5次返回非200状态码或响应内容不是"SUCCESS"，系统将触发熔断，暂停自动回调5分钟</li>
+            <li>熔断恢复：回调成功后自动恢复，或等待5分钟后自动恢复</li>
+        </ul>
+
+        <h2 id="error-code">常见错误码</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>错误码</th>
+                    <th>说明</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>0</td>
+                    <td>成功</td>
+                </tr>
+                <tr>
+                    <td>1</td>
+                    <td>业务错误（具体查看msg字段）</td>
+                </tr>
+                <tr>
+                    <td>500</td>
+                    <td>系统异常</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h2 id="support">技术支持</h2>
+        <p>如有疑问，请联系技术支持。</p>
+    </div>
+
+    <script>
+        // 高亮当前章节
+        document.addEventListener('DOMContentLoaded', function() {
+            const links = document.querySelectorAll('.sidebar a');
+            const sections = document.querySelectorAll('h2[id], h3[id]');
+            
+            // 点击菜单项时添加active类
+            links.forEach(link => {
+                link.addEventListener('click', function(e) {
+                    links.forEach(l => l.classList.remove('active'));
+                    this.classList.add('active');
+                });
+            });
+            
+            // 滚动时高亮当前章节
+            window.addEventListener('scroll', function() {
+                let current = '';
+                sections.forEach(section => {
+                    const sectionTop = section.offsetTop;
+                    const sectionHeight = section.clientHeight;
+                    if (pageYOffset >= sectionTop - 100) {
+                        current = section.getAttribute('id');
+                    }
+                });
+                
+                links.forEach(link => {
+                    link.classList.remove('active');
+                    if (link.getAttribute('href') === '#' + current) {
+                        link.classList.add('active');
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>

@@ -549,7 +549,8 @@
                 
             } else {
                 // 方案2: 完整的OAuth授权流程
-                const appId = "<?= $subjectObj->alipay_app_id ?? '' ?>";
+                // 使用控制器传递的oauthAppId（优先使用.env中的授权专用AppID）
+                const appId = "<?= $oauthAppId ?? ($subjectObj->alipay_app_id ?? '') ?>";
                 const scope = "auth_base";
                 const orderNumber = "<?= $orderNo ?>";
                 // 使用专门的OAuth回调路由
@@ -636,7 +637,9 @@
                 targetUrl = `${currentUrl}?order_number=${orderNumber}`;
                 console.log("🧪 测试模式1: 简单测试");
             } else {
-                const appId = "<?= $subjectObj->alipay_app_id ?? '' ?>";
+                // 方案2: 完整的OAuth授权流程
+                // 使用控制器传递的oauthAppId（优先使用.env中的授权专用AppID）
+                const appId = "<?= $oauthAppId ?? ($subjectObj->alipay_app_id ?? '') ?>";
                 const scope = "auth_base";
                 const orderNumber = "<?= $orderNo ?>";
                 // 使用专门的OAuth回调路由
@@ -685,9 +688,10 @@
                         
                     } else {
                         // 方案2: 完整的OAuth授权流程
-                        const appId = "<?= $subjectObj->alipay_app_id ?? '' ?>";
+                        // 使用控制器传递的oauthAppId（优先使用.env中的授权专用AppID）
+                        const appId = "<?= $oauthAppId ?? ($subjectObj->alipay_app_id ?? '') ?>";
                         const scope = "auth_base";
-                            const orderNumber = "<?= $orderNo ?>";
+                        const orderNumber = "<?= $orderNo ?>";
                             // 使用专门的OAuth回调路由
                             const baseUrl = window.location.origin;
                             const fullRedirectUrl = `${baseUrl}/oauth/callback`;

@@ -34,10 +34,52 @@ class AlipayConfig
         $config->notifyUrl = $paymentInfo['notify_url'] ?? '';
         
         // 证书配置
-        $config->alipayCertPath = base_path($paymentInfo['alipayCertPublicKey'] ?? '');
-        $config->alipayRootCertPath = base_path($paymentInfo['alipayRootCert'] ?? '');
-        $config->merchantCertPath = base_path($paymentInfo['appCertPublicKey'] ?? '');
+        // 处理证书路径：如果路径是相对路径，使用base_path；如果已经是绝对路径，直接使用
+        $alipayCertPath = $paymentInfo['alipayCertPublicKey'] ?? '';
+        $alipayRootCertPath = $paymentInfo['alipayRootCert'] ?? '';
+        $appCertPath = $paymentInfo['appCertPublicKey'] ?? '';
+        
+        // 处理证书路径：统一转换为绝对路径
+        if (!empty($alipayCertPath)) {
+            // 如果已经是绝对路径（以/开头），直接使用；否则使用base_path处理
+            $config->alipayCertPath = (strpos($alipayCertPath, '/') === 0) 
+                ? $alipayCertPath 
+                : base_path($alipayCertPath);
+        } else {
+            $config->alipayCertPath = '';
+        }
+        
+        if (!empty($alipayRootCertPath)) {
+            $config->alipayRootCertPath = (strpos($alipayRootCertPath, '/') === 0) 
+                ? $alipayRootCertPath 
+                : base_path($alipayRootCertPath);
+        } else {
+            $config->alipayRootCertPath = '';
+        }
+        
+        if (!empty($appCertPath)) {
+            $config->merchantCertPath = (strpos($appCertPath, '/') === 0) 
+                ? $appCertPath 
+                : base_path($appCertPath);
+        } else {
+            $config->merchantCertPath = '';
+        }
+        
         $config->merchantPrivateKey = $paymentInfo['AppPrivateKey'] ?? '';
+        
+        // 记录证书路径信息（用于调试）
+        \support\Log::debug('AlipayConfig证书路径处理', [
+            'input_alipay_cert' => $alipayCertPath,
+            'output_alipay_cert' => $config->alipayCertPath,
+            'input_root_cert' => $alipayRootCertPath,
+            'output_root_cert' => $config->alipayRootCertPath,
+            'input_app_cert' => $appCertPath,
+            'output_app_cert' => $config->merchantCertPath,
+            'base_path' => base_path(),
+            'file_exists_alipay' => !empty($config->alipayCertPath) ? file_exists($config->alipayCertPath) : false,
+            'file_exists_root' => !empty($config->alipayRootCertPath) ? file_exists($config->alipayRootCertPath) : false,
+            'file_exists_app' => !empty($config->merchantCertPath) ? file_exists($config->merchantCertPath) : false,
+        ]);
         
         // 验证必要配置
         self::validateConfig($config);
@@ -77,10 +119,35 @@ class AlipayConfig
         foreach ($certFiles as $field => $certInfo) {
             $path = $certInfo['path'];
             $name = $certInfo['name'];
-            $fullPath = base_path($path);
             
+            if (empty($path)) {
+                continue; // 跳过空路径
+            }
+            
+            // 路径已经在getConfig中通过base_path处理过，是完整路径，直接使用
+            // 不再重复调用base_path，避免路径被重复拼接
+            $fullPath = $path;
+            
+            // 检查文件是否存在
             if (!file_exists($fullPath)) {
-                // 提供更详细的错误信息，包括完整路径
+                // 如果文件不存在，尝试使用realpath规范化路径
+                $realPath = realpath($fullPath);
+                if ($realPath && file_exists($realPath)) {
+                    // 如果realpath可以解析，使用realpath
+                    continue;
+                }
+                
+                // 如果还是不存在，提供详细的错误信息
+                \support\Log::error('支付宝证书文件不存在', [
+                    'cert_name' => $name,
+                    'cert_field' => $field,
+                    'cert_path' => $fullPath,
+                    'base_path' => base_path(),
+                    'realpath_result' => $realPath,
+                    'directory_exists' => is_dir(dirname($fullPath)),
+                    'directory_listing' => is_dir(dirname($fullPath)) ? implode(', ', array_slice(scandir(dirname($fullPath)), 0, 10)) : 'N/A'
+                ]);
+                
                 throw new \Exception("支付宝证书文件不存在: {$name} ({$field})，路径: {$fullPath}。请检查证书文件是否存在，或确保数据库中存储了证书内容。");
             }
         }

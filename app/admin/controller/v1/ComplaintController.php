@@ -5,6 +5,8 @@ namespace app\admin\controller\v1;
 use support\Request;
 use support\Db;
 use support\Log;
+use app\model\Subject;
+use app\service\alipay\AlipayComplaintService;
 
 /**
  * 投诉管理控制器
@@ -223,6 +225,101 @@ class ComplaintController
     }
 
     /**
+     * 获取投诉订单详情列表
+     * @param Request $request
+     * @return \support\Response
+     */
+    public function detailList(Request $request)
+    {
+        try {
+            $userData = $request->userData;
+            $isAgent = ($userData['user_group_id'] ?? 0) == 3;
+
+            // 获取参数
+            $complaintId = $request->input('complaint_id');
+            if (empty($complaintId)) {
+                return error('投诉ID不能为空');
+            }
+
+            // 查询投诉记录
+            $complaint = Db::table('alipay_complaint')->where('id', $complaintId)->first();
+            if (!$complaint) {
+                return error('投诉记录不存在');
+            }
+
+            // 代理商权限验证
+            if ($isAgent && isset($userData['agent_id'])) {
+                if ($complaint->agent_id && $complaint->agent_id != $userData['agent_id']) {
+                    return error('无权查看该投诉');
+                }
+            }
+
+            // 查询投诉详情（订单列表）
+            $details = Db::table('alipay_complaint_detail as d')
+                ->leftJoin('order as o', function($join) {
+                    $join->on('d.merchant_order_no', '=', 'o.merchant_order_no')
+                         ->orOn('d.platform_order_no', '=', 'o.platform_order_no')
+                         ->orOn('d.complaint_no', '=', 'o.merchant_order_no');
+                })
+                ->select([
+                    'd.id',
+                    'd.complaint_id',
+                    'd.merchant_order_no',
+                    'd.platform_order_no',
+                    'd.complaint_no',
+                    'd.order_amount',
+                    'd.complaint_amount',
+                    'd.created_at',
+                    'd.updated_at',
+                    'o.id as order_id',
+                    'o.pay_status',
+                    'o.order_amount as order_real_amount',
+                    'o.pay_time',
+                    'o.buyer_id'
+                ])
+                ->where('d.complaint_id', $complaintId)
+                ->orderBy('d.id', 'asc')
+                ->get();
+
+            // 格式化数据
+            $detailList = [];
+            foreach ($details as $detail) {
+                $detailList[] = [
+                    'id' => $detail->id,
+                    'complaint_id' => $detail->complaint_id,
+                    'merchant_order_no' => $detail->merchant_order_no,
+                    'platform_order_no' => $detail->platform_order_no,
+                    'complaint_no' => $detail->complaint_no,
+                    'order_amount' => $detail->order_amount,
+                    'complaint_amount' => $detail->complaint_amount,
+                    'order_id' => $detail->order_id,
+                    'pay_status' => $detail->pay_status,
+                    'order_real_amount' => $detail->order_real_amount,
+                    'pay_time' => $detail->pay_time,
+                    'buyer_id' => $detail->buyer_id,
+                    'order_exists' => !empty($detail->order_id), // 订单是否存在
+                    'created_at' => $detail->created_at,
+                    'updated_at' => $detail->updated_at
+                ];
+            }
+
+            return success([
+                'complaint_id' => $complaintId,
+                'details' => $detailList,
+                'total' => count($detailList)
+            ]);
+
+        } catch (\Throwable $e) {
+            Log::error('获取投诉订单详情失败', [
+                'complaint_id' => $complaintId ?? 0,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return error('获取投诉订单详情失败: ' . $e->getMessage());
+        }
+    }
+
+    /**
      * 处理投诉
      * @param Request $request
      * @return \support\Response
@@ -238,6 +335,7 @@ class ComplaintController
             $processCode = $request->input('process_code');
             $feedback = $request->input('feedback');
             $refundAmount = $request->input('refund_amount', 0);
+            $detailIds = $request->input('detail_ids', []); // 选中的投诉详情ID列表
 
             // 验证参数
             if (empty($id)) {
@@ -246,9 +344,7 @@ class ComplaintController
             if (empty($processCode)) {
                 return error('处理结果码不能为空');
             }
-            if (empty($feedback)) {
-                return error('反馈内容不能为空');
-            }
+            // 反馈内容改为选填，不再验证
 
             // 处理后自动设置为处理完成状态
             $status = 'PROCESSED';
@@ -279,39 +375,103 @@ class ComplaintController
                 return error('该投诉当前状态不允许处理');
             }
 
-            // 更新投诉记录
-            $updateData = [
-                'complaint_status' => $status,
-                'process_code' => $processCode,
-                'merchant_feedback' => $feedback,
-                'refund_amount' => $refundAmount,
-                'feedback_time' => date('Y-m-d H:i:s'),
-                'handler_id' => $userData['id'] ?? 0,
-                'updated_at' => date('Y-m-d H:i:s')
-            ];
+            // 使用投诉处理服务处理投诉（包含退款逻辑）
+            try {
+                $result = \app\service\ComplaintService::handleComplaint(
+                    $id,
+                    $processCode,
+                    $feedback,
+                    $refundAmount,
+                    $userData['id'] ?? 0,
+                    $detailIds // 传递选中的订单ID列表
+                );
 
-            $result = Db::table('alipay_complaint')
-                ->where('id', $id)
-                ->update($updateData);
+                if (!$result['success']) {
+                    \app\service\OrderLogService::log(
+                        '', '', '',
+                        '投诉处理', 'ERROR', '节点34-投诉处理失败',
+                        ['action'=>'handle投诉','reason'=>$result['message'],'complaint_id'=>$id],
+                        $request->getRealIp(), $request->header('user-agent','')
+                    );
+                    return error($result['message']);
+                }
 
-            if ($result === false) {
+                \app\service\OrderLogService::log(
+                    '', '', '',
+                    '投诉处理', 'INFO', '节点35-投诉处理成功',
+                    ['action'=>'handle投诉','process_code'=>$processCode,'complaint_id'=>$id,'status'=>$status,'handler_id'=>$userData['id']??0,'refund_amount'=>$refundAmount,'query_results'=>$result['query_results']??null,'refund_result'=>$result['refund_result']??null],
+                    $request->getRealIp(), $request->header('user-agent','')
+                );
+
+                // 构建返回结果
+                $responseData = [
+                    'id' => $id,
+                    'message' => $result['message'] ?? '处理成功',
+                    'query_results' => $result['query_results'] ?? null,
+                    'refund_result' => $result['refund_result'] ?? null,
+                    'finish_complaint_result' => $result['finish_complaint_result'] ?? null,
+                    'status_updated' => $result['status_updated'] ?? false
+                ];
+                
+                // 如果有退款结果，提取关键信息
+                if (!empty($result['refund_result'])) {
+                    $refundResult = $result['refund_result'];
+                    $responseData['refund_info'] = [
+                        'success' => $refundResult['success'] ?? false,
+                        'skipped' => $refundResult['skipped'] ?? false,
+                        'refund_amount' => $refundResult['refund_amount'] ?? 0,
+                        'message' => $refundResult['message'] ?? ''
+                    ];
+                    
+                    // 如果有完结投诉结果
+                    if (!empty($refundResult['finish_complaint'])) {
+                        $finishComplaint = $refundResult['finish_complaint'];
+                        $responseData['finish_complaint_info'] = [
+                            'success' => $finishComplaint['success'] ?? false,
+                            'error' => $finishComplaint['error'] ?? null,
+                            'error_details' => $finishComplaint['error_details'] ?? null,
+                            'result' => $finishComplaint['result'] ?? null
+                        ];
+                        
+                        // 如果完结投诉失败，在消息中突出显示
+                        if (!($finishComplaint['success'] ?? false)) {
+                            $errorMsg = $finishComplaint['error'] ?? '未知错误';
+                            $responseData['message'] .= '；【支付宝完结投诉失败：' . $errorMsg . '】';
+                        }
+                    }
+                }
+                
+                // 检查状态是否更新
+                // 如果状态未更新，说明投诉未真正处理完成，应该返回错误
+                if (!($result['status_updated'] ?? false)) {
+                    $responseData['message'] = '投诉处理失败：' . ($result['message'] ?? '投诉未真正处理完成');
+                    $responseData['message'] .= '；【注意：投诉状态未更新为PROCESSED，可能因为退款失败或支付宝完结投诉失败】';
+                    
+                    // 记录详细日志
+                    Log::warning('投诉处理：状态未更新，投诉未真正处理完成', [
+                        'complaint_id' => $id,
+                        'refund_success' => $result['refund_success'] ?? false,
+                        'finish_success' => $result['finish_success'] ?? false,
+                        'status_updated' => $result['status_updated'] ?? false,
+                        'refund_result' => $result['refund_result'] ?? null,
+                        'finish_complaint_result' => $result['finish_complaint_result'] ?? null
+                    ]);
+                    
+                    // 返回错误，而不是成功
+                    return error($responseData['message'], $responseData);
+                }
+                
+                return success($responseData, $result['message'] ?? '处理成功');
+
+            } catch (\Exception $e) {
                 \app\service\OrderLogService::log(
                     '', '', '',
                     '投诉处理', 'ERROR', '节点34-投诉处理失败',
-                    ['action'=>'update投诉','reason'=>'更新失败','complaint_id'=>$id],
+                    ['action'=>'handle投诉','reason'=>$e->getMessage(),'complaint_id'=>$id],
                     $request->getRealIp(), $request->header('user-agent','')
                 );
-                return error('更新失败');
+                return error('处理投诉失败: ' . $e->getMessage());
             }
-
-            \app\service\OrderLogService::log(
-                '', '', '',
-                '投诉处理', 'INFO', '节点35-投诉处理成功',
-                ['action'=>'handle投诉','process_code'=>$processCode,'complaint_id'=>$id,'status'=>$status,'handler_id'=>$userData['id']??0,'refund_amount'=>$refundAmount],
-                $request->getRealIp(), $request->header('user-agent','')
-            );
-
-            return success(['id' => $id], '处理成功');
 
         } catch (\Throwable $e) {
             Log::error('处理投诉失败', [

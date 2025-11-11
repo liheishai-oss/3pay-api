@@ -102,6 +102,7 @@ func main() {
 	subjectRepo := repository.NewSubjectRepository(db, log)
 	complaintRepo := repository.NewComplaintRepository(db, log)
 	blacklistRepo := repository.NewBlacklistRepository(db, log)
+	orderRepo := repository.NewOrderRepository(db, log)
 
 	// 初始化证书管理器
 	certManager := cert.NewCertManager(
@@ -120,9 +121,8 @@ func main() {
 
 	// 初始化服务层
 	alipayService := service.NewAlipayService(log)
-	blacklistService := service.NewBlacklistService(blacklistRepo, complaintRepo, log)
 	notificationService := service.NewNotificationService(db, log)
-	_ = notificationService // TODO: 使用通知服务
+	blacklistService := service.NewBlacklistService(blacklistRepo, complaintRepo, notificationService, log)
 
 	// 初始化Worker管理器
 	workerManager := worker.NewManager(
@@ -130,6 +130,7 @@ func main() {
 		subjectRepo,
 		complaintRepo,
 		blacklistRepo,
+		orderRepo,
 		certManager,
 		lockManager,
 		alipayService,

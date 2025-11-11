@@ -29,8 +29,10 @@ use support\Model;
  * @property string $notify_time 通知时间
  * @property string $close_time 关闭时间
  * @property string $expire_time 过期时间
+ * @property string $subject 订单标题（商品名称）
+ * @property string $body 订单描述（商品描述）
  * @property string $remark 备注
- * @property string $buyer_id 购买者UUID
+ * @property string $buyer_id 购买者UID
  * @property string $created_at 创建时间
  * @property string $updated_at 更新时间
  */
@@ -51,6 +53,8 @@ class Order extends Model
         'product_id',
         'subject_id',
         'order_amount',
+        'subject',
+        'body',
         'pay_status',
         'notify_status',
         'notify_times',

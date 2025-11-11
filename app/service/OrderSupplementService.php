@@ -96,20 +96,54 @@ class OrderSupplementService
             }
 
             // 4. 查询支付宝订单状态
-            // 优先尝试使用支付宝交易号查询（如果存在），避免权限不足问题
+            // 注意：支付宝查询API只支持使用 out_trade_no（商户订单号）查询
+            // 创建订单时，我们使用的是 platform_order_no 作为 out_trade_no 传递给支付宝
+            // 因此查询时也应该使用 platform_order_no 作为 out_trade_no 查询
+            
             $queryOrderNo = null;
             $useTradeNo = false;
             $queryAttempts = [];
             
-            // 策略1：如果有支付宝交易号，优先使用交易号查询（跨应用查询更可靠）
-            if (!empty($order->alipay_order_no) || !empty($order->trade_no)) {
-                $queryOrderNo = $order->alipay_order_no ?: $order->trade_no;
-                $useTradeNo = true;
-                $queryAttempts[] = ['type' => 'trade_no', 'value' => $queryOrderNo];
-            } else {
-                // 策略2：使用平台订单号（商户订单号）
+            // 策略1：如果有支付宝交易号（trade_no），优先使用交易号查询（跨应用查询更可靠）
+            // 注意：支付宝SDK的query方法只接受out_trade_no，不支持trade_no
+            // 但我们可以尝试使用trade_no，如果失败再使用out_trade_no
+            // 实际上，支付宝EasySDK的query方法只支持out_trade_no，不支持trade_no
+            // 所以这里useTradeNo参数实际上不起作用，我们始终使用out_trade_no查询
+            
+            // 策略1：优先使用平台订单号（创建订单时作为out_trade_no传递给支付宝）
+            if (!empty($order->platform_order_no)) {
                 $queryOrderNo = $order->platform_order_no;
-                $queryAttempts[] = ['type' => 'platform_order_no', 'value' => $queryOrderNo];
+                $useTradeNo = false; // 始终使用out_trade_no查询
+                $queryAttempts[] = ['type' => 'out_trade_no', 'value' => $queryOrderNo, 'note' => '平台订单号（创建时作为out_trade_no传递给支付宝）'];
+            }
+            
+            // 记录订单号信息和支付配置，用于调试
+            // 注意：$paymentConfig 是数组，包含 appid 字段
+            $paymentAppId = $paymentConfig['appid'] ?? 'NULL';
+            Log::info('补单查询：订单号和配置信息', [
+                'order_id' => $order->id,
+                'platform_order_no' => $order->platform_order_no,
+                'merchant_order_no' => $order->merchant_order_no,
+                'alipay_order_no' => $order->alipay_order_no,
+                'query_order_no' => $queryOrderNo,
+                'query_type' => 'out_trade_no',
+                'subject_id' => $order->subject_id,
+                'subject_alipay_app_id' => $subject->alipay_app_id ?? 'NULL',
+                'payment_config_app_id' => $paymentAppId,
+                'note' => '创建订单时使用platform_order_no作为out_trade_no传递给支付宝，查询时也必须使用相同的platform_order_no',
+                'order_created_at' => $order->created_at,
+                'order_expire_time' => $order->expire_time,
+                'order_pay_status' => $order->pay_status
+            ]);
+            
+            // 检查app_id是否匹配
+            if (!empty($subject->alipay_app_id) && $paymentAppId !== 'NULL' && $subject->alipay_app_id !== $paymentAppId) {
+                Log::warning('补单查询：app_id不匹配', [
+                    'order_id' => $order->id,
+                    'subject_alipay_app_id' => $subject->alipay_app_id,
+                    'payment_config_app_id' => $paymentAppId,
+                    'note' => '这可能导致查询失败，因为订单可能属于不同的支付宝应用'
+                ]);
             }
             
             // 记录开始查询支付宝的链路日志
@@ -137,7 +171,7 @@ class OrderSupplementService
             try {
                 $alipayOrder = AlipayQueryService::queryOrder($queryOrderNo, $paymentConfig, $useTradeNo);
                 
-                // 记录查询成功的链路日志
+                // 记录查询成功的链路日志（包含支付时间信息）
                 OrderLogService::log(
                     $order->trace_id ?? '',
                     $order->platform_order_no,
@@ -150,6 +184,9 @@ class OrderSupplementService
                         'query_order_no' => $queryOrderNo,
                         'trade_status' => $alipayOrder['trade_status'] ?? '',
                         'trade_no' => $alipayOrder['trade_no'] ?? '',
+                        'gmt_payment' => $alipayOrder['gmt_payment'] ?? 'NULL',
+                        'send_pay_date' => $alipayOrder['send_pay_date'] ?? 'NULL',
+                        'gmt_create' => $alipayOrder['gmt_create'] ?? 'NULL',
                         'operator_ip' => $operatorIp
                     ],
                     $operatorIp,
@@ -157,14 +194,22 @@ class OrderSupplementService
                 );
             } catch (\Exception $e) {
                 $lastError = $e;
+                $errorMessage = $e->getMessage();
+                $isPermissionError = (strpos($errorMessage, 'Insufficient Permissions') !== false || 
+                                     strpos($errorMessage, '权限不足') !== false ||
+                                     strpos($errorMessage, 'isv.invalid-app-id') !== false);
+                $isTradeNotExist = (strpos($errorMessage, '交易不存在') !== false ||
+                                   strpos($errorMessage, 'TRADE_NOT_EXIST') !== false ||
+                                   strpos($errorMessage, 'Business Failed') !== false);
                 
-                // 如果使用平台订单号查询失败，且错误是权限不足，尝试使用商户订单号
-                if (!$useTradeNo && (strpos($e->getMessage(), 'Insufficient Permissions') !== false || 
-                                     strpos($e->getMessage(), '权限不足') !== false)) {
+                // 如果使用平台订单号或支付宝交易号查询失败，尝试使用商户订单号
+                if (!$useTradeNo && $isPermissionError) {
+                    // 如果使用平台订单号查询失败且是权限不足，尝试使用商户订单号
                     Log::warning('使用平台订单号查询权限不足，尝试使用商户订单号', [
                         'order_id' => $order->id,
                         'platform_order_no' => $order->platform_order_no,
-                        'merchant_order_no' => $order->merchant_order_no
+                        'merchant_order_no' => $order->merchant_order_no,
+                        'error' => $errorMessage
                     ]);
                     
                     try {
@@ -183,16 +228,80 @@ class OrderSupplementService
                             'error' => $e2->getMessage()
                         ]);
                     }
+                } elseif ($useTradeNo && ($isPermissionError || $isTradeNotExist) && !empty($order->merchant_order_no)) {
+                    // 如果使用支付宝交易号查询失败（权限不足或交易不存在），尝试使用商户订单号
+                    Log::warning('使用支付宝交易号查询失败，尝试使用商户订单号', [
+                        'order_id' => $order->id,
+                        'alipay_order_no' => $order->alipay_order_no,
+                        'merchant_order_no' => $order->merchant_order_no,
+                        'error' => $errorMessage,
+                        'error_type' => $isPermissionError ? '权限不足' : ($isTradeNotExist ? '交易不存在' : '其他')
+                    ]);
+                    
+                    try {
+                        // 尝试使用商户订单号查询
+                        $queryAttempts[] = ['type' => 'merchant_order_no', 'value' => $order->merchant_order_no];
+                        $alipayOrder = AlipayQueryService::queryOrder($order->merchant_order_no, $paymentConfig, false);
+                        Log::info('使用商户订单号查询成功', [
+                            'order_id' => $order->id,
+                            'merchant_order_no' => $order->merchant_order_no
+                        ]);
+                    } catch (\Exception $e2) {
+                        $lastError = $e2;
+                        Log::warning('使用商户订单号查询也失败', [
+                            'order_id' => $order->id,
+                            'merchant_order_no' => $order->merchant_order_no,
+                            'error' => $e2->getMessage()
+                        ]);
+                    }
+                } elseif ($useTradeNo && $isTradeNotExist && !empty($order->platform_order_no) && $order->platform_order_no !== $order->merchant_order_no) {
+                    // 如果使用支付宝交易号查询返回"交易不存在"，且平台订单号与商户订单号不同，尝试使用平台订单号
+                    Log::warning('使用支付宝交易号查询返回交易不存在，尝试使用平台订单号', [
+                        'order_id' => $order->id,
+                        'alipay_order_no' => $order->alipay_order_no,
+                        'platform_order_no' => $order->platform_order_no,
+                        'error' => $errorMessage
+                    ]);
+                    
+                    try {
+                        // 尝试使用平台订单号查询
+                        $queryAttempts[] = ['type' => 'platform_order_no', 'value' => $order->platform_order_no];
+                        $alipayOrder = AlipayQueryService::queryOrder($order->platform_order_no, $paymentConfig, false);
+                        Log::info('使用平台订单号查询成功', [
+                            'order_id' => $order->id,
+                            'platform_order_no' => $order->platform_order_no
+                        ]);
+                    } catch (\Exception $e2) {
+                        $lastError = $e2;
+                        Log::warning('使用平台订单号查询也失败', [
+                            'order_id' => $order->id,
+                            'platform_order_no' => $order->platform_order_no,
+                            'error' => $e2->getMessage()
+                        ]);
+                    }
                 }
                 
                 // 如果所有查询都失败
                 if ($alipayOrder === null) {
+                    $errorMessage = $lastError ? $lastError->getMessage() : '未知错误';
+                    $isTradeNotExist = (strpos($errorMessage, '交易不存在') !== false ||
+                                       strpos($errorMessage, 'TRADE_NOT_EXIST') !== false ||
+                                       strpos($errorMessage, 'Business Failed') !== false);
+                    $isPermissionError = (strpos($errorMessage, 'Insufficient Permissions') !== false || 
+                                         strpos($errorMessage, '权限不足') !== false ||
+                                         strpos($errorMessage, 'isv.invalid-app-id') !== false);
+                    
                     Log::warning('支付宝订单查询失败', [
                         'order_id' => $order->id,
                         'platform_order_no' => $order->platform_order_no,
                         'merchant_order_no' => $order->merchant_order_no,
+                        'alipay_order_no' => $order->alipay_order_no,
                         'attempts' => $queryAttempts,
-                        'error' => $lastError ? $lastError->getMessage() : '未知错误'
+                        'error' => $errorMessage,
+                        'error_type' => $isTradeNotExist ? '交易不存在' : ($isPermissionError ? '权限不足' : '其他'),
+                        'order_pay_status' => $order->pay_status,
+                        'order_expire_time' => $order->expire_time,
+                        'order_created_at' => $order->created_at
                     ]);
 
                     // 记录补单查询失败日志
@@ -205,21 +314,43 @@ class OrderSupplementService
                         '节点31-补单查询失败',
                         [
                             'action' => '查询支付宝状态失败',
-                            'error' => $lastError ? $lastError->getMessage() : '未知错误',
+                            'error' => $errorMessage,
+                            'error_type' => $isTradeNotExist ? '交易不存在' : ($isPermissionError ? '权限不足' : '其他'),
                             'query_attempts' => $queryAttempts,
+                            'alipay_order_no' => $order->alipay_order_no,
+                            'order_pay_status' => $order->pay_status,
                             'operator_ip' => $operatorIp
                         ],
                         $operatorIp,
                         $operatorAgent
                     );
 
+                    // 构建更详细的错误提示
+                    $suggestion = '';
+                    if ($isTradeNotExist) {
+                        $suggestion = '交易不存在，可能原因：1) 订单在支付宝中不存在或已过期被删除；2) 订单属于其他应用无法查询；3) 订单号不正确；4) 订单创建失败。';
+                        if ($order->pay_status == Order::PAY_STATUS_CREATED || $order->pay_status == Order::PAY_STATUS_OPENED) {
+                            $suggestion .= ' 提示：订单可能未成功创建到支付宝，或订单已过期。';
+                        }
+                    } elseif ($isPermissionError) {
+                        $suggestion = '权限不足，可能原因：1) 支付宝应用未开通订单查询权限；2) 订单属于其他应用无法查询；3) 需要使用支付宝交易号(trade_no)查询而非商户订单号。';
+                    } else {
+                        $suggestion = '请检查：1) 支付宝应用是否已开通订单查询权限；2) 订单是否属于当前应用；3) 支付宝开放平台应用配置是否正确；4) 网络连接是否正常。';
+                    }
+
                     return [
                         'success' => false,
-                        'message' => '查询支付宝订单状态失败: ' . ($lastError ? $lastError->getMessage() : '未知错误'),
+                        'message' => '查询支付宝订单状态失败: ' . $errorMessage,
                         'data' => [
-                            'query_error' => $lastError ? $lastError->getMessage() : '未知错误',
+                            'query_error' => $errorMessage,
+                            'error_type' => $isTradeNotExist ? 'trade_not_exist' : ($isPermissionError ? 'permission_error' : 'other'),
                             'query_attempts' => $queryAttempts,
-                            'suggestion' => '请检查：1) 支付宝应用是否已开通订单查询权限；2) 订单是否属于当前应用；3) 支付宝开放平台应用配置是否正确'
+                            'alipay_order_no' => $order->alipay_order_no,
+                            'platform_order_no' => $order->platform_order_no,
+                            'merchant_order_no' => $order->merchant_order_no,
+                            'order_pay_status' => $order->pay_status,
+                            'order_expire_time' => $order->expire_time,
+                            'suggestion' => $suggestion
                         ]
                     ];
                 }
@@ -235,7 +366,8 @@ class OrderSupplementService
                 if ($isManual && $oldPayStatus == Order::PAY_STATUS_PAID) {
                     Db::beginTransaction();
                     try {
-                        $order->pay_status = Order::PAY_STATUS_UNPAID;
+                        // 将订单状态纠正为"已创建"（待支付状态）
+                        $order->pay_status = Order::PAY_STATUS_CREATED;
                         $order->pay_time = null;
                         $order->notify_status = Order::NOTIFY_STATUS_PENDING;
                         $order->save();
@@ -252,7 +384,7 @@ class OrderSupplementService
                             [
                                 'action' => '纠正订单状态：本地已支付但支付宝未支付',
                                 'old_status' => '已支付',
-                                'new_status' => '待支付',
+                                'new_status' => '已创建',
                                 'trade_status' => $tradeStatus,
                                 'operator_ip' => $operatorIp
                             ],
@@ -262,11 +394,11 @@ class OrderSupplementService
                         
                         return [
                             'success' => true,
-                            'message' => '状态已纠正：本地显示已支付，但支付宝实际未支付，已纠正为待支付',
+                            'message' => '状态已纠正：本地显示已支付，但支付宝实际未支付，已纠正为已创建',
                             'data' => [
                                 'trade_status' => $tradeStatus,
                                 'old_status' => '已支付',
-                                'new_status' => '待支付',
+                                'new_status' => '已创建',
                                 'status_corrected' => true,
                                 'alipay_order' => $alipayOrder
                             ]
@@ -337,7 +469,49 @@ class OrderSupplementService
                 );
                 
                 $order->pay_status = Order::PAY_STATUS_PAID;
-                $order->pay_time = $alipayOrder['gmt_payment'] ?? date('Y-m-d H:i:s');
+                // 设置支付时间：优先使用 gmt_payment，其次使用 send_pay_date
+                $paymentTime = '';
+                if (!empty($alipayOrder['gmt_payment'])) {
+                    $paymentTime = $alipayOrder['gmt_payment'];
+                } elseif (!empty($alipayOrder['send_pay_date'])) {
+                    $paymentTime = $alipayOrder['send_pay_date'];
+                    Log::warning("补单：使用send_pay_date作为支付时间", [
+                        'order_id' => $order->id,
+                        'platform_order_no' => $order->platform_order_no,
+                        'send_pay_date' => $paymentTime
+                    ]);
+                }
+                
+                if (!empty($paymentTime)) {
+                    // 尝试解析支付宝返回的日期时间，转换为标准格式
+                    $timestamp = strtotime($paymentTime);
+                    if ($timestamp !== false) {
+                        $order->pay_time = date('Y-m-d H:i:s', $timestamp);
+                    } else {
+                        // 如果解析失败，记录警告并使用当前时间
+                        Log::warning("补单：支付时间解析失败，使用当前时间", [
+                            'order_id' => $order->id,
+                            'platform_order_no' => $order->platform_order_no,
+                            'payment_time' => $paymentTime,
+                            'gmt_payment' => $alipayOrder['gmt_payment'] ?? 'NULL',
+                            'send_pay_date' => $alipayOrder['send_pay_date'] ?? 'NULL'
+                        ]);
+                        $order->pay_time = date('Y-m-d H:i:s');
+                    }
+                } else {
+                    // 如果所有支付时间字段都为空，记录错误并使用当前时间
+                    Log::error("补单：无法获取支付时间，使用当前时间", [
+                        'order_id' => $order->id,
+                        'platform_order_no' => $order->platform_order_no,
+                        'trade_status' => $alipayOrder['trade_status'] ?? '',
+                        'trade_no' => $alipayOrder['trade_no'] ?? '',
+                        'gmt_payment' => $alipayOrder['gmt_payment'] ?? 'NULL',
+                        'send_pay_date' => $alipayOrder['send_pay_date'] ?? 'NULL',
+                        'gmt_create' => $alipayOrder['gmt_create'] ?? 'NULL',
+                        'alipay_response_keys' => array_keys($alipayOrder)
+                    ]);
+                    $order->pay_time = date('Y-m-d H:i:s');
+                }
                 // 补单时记录操作者IP（如果是手动补单，可能是管理员IP；自动补单则为SYSTEM）
                 if (empty($order->pay_ip)) {
                     $order->pay_ip = $operatorIp;
@@ -345,17 +519,34 @@ class OrderSupplementService
                 
                 // 更新支付宝交易号（如果存在）
                 if (!empty($alipayOrder['trade_no'])) {
-                    $order->trade_no = $alipayOrder['trade_no'];
                     $order->alipay_order_no = $alipayOrder['trade_no'];
                 }
 
-                // 更新其他信息
+                // 更新购买者UID：只在有值时才更新，如果为空则保留原值（避免覆盖）
+                $oldBuyerId = $order->buyer_id;
                 if (!empty($alipayOrder['buyer_id'])) {
                     $order->buyer_id = $alipayOrder['buyer_id'];
+                    if ($oldBuyerId != $alipayOrder['buyer_id']) {
+                        Log::info('补单：更新购买者UID', [
+                            'order_id' => $order->id,
+                            'platform_order_no' => $order->platform_order_no,
+                            'old_buyer_id' => $oldBuyerId,
+                            'new_buyer_id' => $alipayOrder['buyer_id']
+                        ]);
+                    }
+                } elseif (empty($order->buyer_id)) {
+                    // 如果订单中也没有buyer_id，记录警告
+                    Log::warning('补单：buyer_id为空，且订单中也没有buyer_id', [
+                        'order_id' => $order->id,
+                        'platform_order_no' => $order->platform_order_no,
+                        'alipay_order_keys' => array_keys($alipayOrder),
+                        'trade_status' => $alipayOrder['trade_status'] ?? ''
+                    ]);
                 }
-                if (!empty($alipayOrder['buyer_logon_id'])) {
-                    $order->mobile = $alipayOrder['buyer_logon_id'];
-                }
+                // 注意：order表中没有mobile字段，如果需要存储buyer_logon_id，需要先添加该字段
+                // if (!empty($alipayOrder['buyer_logon_id'])) {
+                //     $order->mobile = $alipayOrder['buyer_logon_id'];
+                // }
 
                 $order->save();
 
@@ -445,49 +636,73 @@ class OrderSupplementService
                 }
                 $message .= ($notifyResult['success'] ? '，回调已触发' : '，回调未触发');
                 
-                // 补单成功后，如果订单已支付但未分账，触发分账处理
+                // 补单成功后，如果订单已支付，将订单加入分账队列（秒级异步处理）
                 $royaltyResult = ['success' => false, 'message' => '未处理'];
                 try {
-                    $order->refresh(); // 刷新订单数据
-                    if ($order->needsRoyalty()) {
-                        $royaltyResult = \app\service\royalty\RoyaltyService::processRoyalty(
-                            $order,
-                            $operatorIp,
-                            $operatorAgent
-                        );
+                    $order->refresh(); // 刷新订单数据，确保获取最新的订单状态
+                    
+                    // 检查订单是否需要分账
+                    if ($order->pay_status == Order::PAY_STATUS_PAID) {
+                        // 将订单ID加入Redis分账队列
+                        $queueKey = \app\common\constants\CacheKeys::getRoyaltyQueueKey();
+                        $queueData = json_encode([
+                            'order_id' => $order->id,
+                            'operator_ip' => $operatorIp,
+                            'operator_agent' => $operatorAgent ?: ($isManual ? 'ManualSupplement' : 'AutoSupplement'),
+                            'timestamp' => time()
+                        ]);
                         
-                        // 记录分账结果日志
+                        \support\Redis::lpush($queueKey, $queueData);
+                        
+                        // 记录分账队列日志
                         OrderLogService::log(
                             $order->trace_id ?? '',
                             $order->platform_order_no,
                             $order->merchant_order_no,
                             $isManual ? '手动补单' : '自动补单',
-                            $royaltyResult['success'] ? 'INFO' : 'WARN',
-                            '节点35-补单后分账',
+                            'INFO',
+                            '节点34-补单后分账入队',
                             [
-                                'action' => $royaltyResult['success'] ? '补单后分账成功' : '补单后分账失败',
-                                'royalty_result' => $royaltyResult['success'] ? '成功' : $royaltyResult['message'],
+                                'action' => '补单成功后将订单加入分账队列，将由分账进程秒级处理',
+                                'pay_status' => $order->pay_status,
+                                'subject_id' => $order->subject_id,
+                                'note' => '分账将由OrderAutoRoyalty进程秒级处理（每1秒检查队列），不阻塞补单响应',
                                 'operator_ip' => $operatorIp
                             ],
                             $operatorIp,
                             $operatorAgent
                         );
                         
-                        if ($royaltyResult['success']) {
-                            $message .= '，分账已处理';
-                        } else {
-                            $message .= '，分账未处理（' . $royaltyResult['message'] . '）';
-                        }
+                        $royaltyResult = [
+                            'success' => true,
+                            'message' => '已加入分账队列，将由分账进程秒级处理'
+                        ];
+                        
+                        $message .= '，分账将由自动分账进程秒级处理';
+                        
+                        Log::info('补单成功后已将订单加入分账队列', [
+                            'order_id' => $order->id,
+                            'platform_order_no' => $order->platform_order_no,
+                            'note' => '分账将由OrderAutoRoyalty进程秒级处理'
+                        ]);
+                    } else {
+                        $royaltyResult = [
+                            'success' => false,
+                            'message' => '订单未支付，不需要分账'
+                        ];
                     }
                 } catch (\Exception $e) {
-                    Log::error('补单后分账处理异常', [
-                        'order_id' => $order->id,
-                        'error' => $e->getMessage()
-                    ]);
+                    // 入队失败不影响补单结果，只记录日志
                     $royaltyResult = [
                         'success' => false,
-                        'message' => '分账处理异常: ' . $e->getMessage()
+                        'message' => '加入分账队列失败: ' . $e->getMessage()
                     ];
+                    
+                    Log::warning('补单后加入分账队列失败', [
+                        'order_id' => $order->id,
+                        'platform_order_no' => $order->platform_order_no,
+                        'error' => $e->getMessage()
+                    ]);
                 }
                 
                 return [
@@ -551,7 +766,8 @@ class OrderSupplementService
             // 查询待补单的订单：待支付状态 + 创建时间超过指定分钟
             $timeThreshold = date('Y-m-d H:i:s', time() - $minutesAgo * 60);
             
-            $orders = Order::where('pay_status', Order::PAY_STATUS_UNPAID)
+            // 查询待补单的订单：已创建或已打开状态 + 创建时间超过指定分钟
+            $orders = Order::whereIn('pay_status', [Order::PAY_STATUS_CREATED, Order::PAY_STATUS_OPENED])
                 ->where('created_at', '<', $timeThreshold)
                 ->limit($limit)
                 ->get();
@@ -616,7 +832,8 @@ class OrderSupplementService
     private static function getPayStatusText($status): string
     {
         $statusMap = [
-            Order::PAY_STATUS_UNPAID => '待支付',
+            Order::PAY_STATUS_CREATED => '已创建',
+            Order::PAY_STATUS_OPENED => '已打开',
             Order::PAY_STATUS_PAID => '已支付',
             Order::PAY_STATUS_CLOSED => '已关闭',
             Order::PAY_STATUS_REFUNDED => '已退款'

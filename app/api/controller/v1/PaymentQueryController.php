@@ -29,11 +29,25 @@ class PaymentQueryController
             }
 
             // 验证商户
-            $merchant = \app\model\Merchant::where('api_key', $params['api_key'])
-                ->where('status', \app\model\Merchant::STATUS_ENABLED)
-                ->first();
+            $apiKey = $params['api_key'] ?? '';
+            $merchant = \app\model\Merchant::where('api_key', $apiKey)->first();
             
             if (!$merchant) {
+                Log::warning('API密钥不存在（支付查询）', [
+                    'api_key' => $apiKey,
+                    'api_key_length' => strlen($apiKey),
+                    'request_ip' => $request->getRealIp()
+                ]);
+                return $this->error('无效的API密钥或商户已被禁用');
+            }
+            
+            if ($merchant->status != \app\model\Merchant::STATUS_ENABLED) {
+                Log::warning('商户已被禁用（支付查询）', [
+                    'merchant_id' => $merchant->id,
+                    'merchant_name' => $merchant->merchant_name,
+                    'status' => $merchant->status,
+                    'api_key' => substr($apiKey, 0, 10) . '...'
+                ]);
                 return $this->error('无效的API密钥或商户已被禁用');
             }
 

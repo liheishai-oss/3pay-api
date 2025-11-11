@@ -263,13 +263,18 @@ class PaymentFactory
         $alipayService = new AlipayService();
 
         // 构建支付宝订单信息
+        // 处理subject和body：如果没传递使用默认值
+        $defaultSubject = '商品支付';
+        $productTitle = !empty($orderInfo['subject']) ? trim($orderInfo['subject']) : $defaultSubject;
+        $remark = !empty($orderInfo['body']) ? trim($orderInfo['body']) : $productTitle;
+        
         $alipayOrderInfo = [
             'payment_order_number' => $orderInfo['platform_order_no'],
-            'product_title' => $orderInfo['subject'],
+            'product_title' => $productTitle,
             'payment_amount' => number_format($orderInfo['amount'], 2, '.', ''),
-            'order_expiry_time' => $orderInfo['expire_time'],
+            'order_expiry_time' => $orderInfo['expire_time'] ?? '',
             'pid' => $orderInfo['alipay_pid'] ?? '',
-            'remark' => $orderInfo['body'] ?? $orderInfo['subject'],
+            'remark' => $remark,
             'quit_url' => $orderInfo['return_url'] ?? '',
             'return_url' => $orderInfo['return_url'] ?? '',
             'buyer_id' => $orderInfo['buyer_id'] ?? '', // 添加buyer_id支持

@@ -31,8 +31,8 @@ class OrderController
      * - merchant_order_no: 商户订单号（唯一）
      * - product_code: 产品编号（4位，如9469）
      * - amount: 订单金额（元）
-     * - subject: 订单标题
-     * - body: 订单描述（可选）
+     * - subject: 订单标题（可选，默认：商品支付）
+     * - body: 订单描述（可选，默认：使用subject的值）
      * - notify_url: 异步通知地址（可选，使用商户配置的地址）
      * - return_url: 同步返回地址（可选，使用商户配置的地址）
      * - auth_code: 授权码（条码支付时必填）
@@ -75,8 +75,8 @@ class OrderController
                 $request->header('user-agent', '')
             );
             
-            // 验证必填参数
-            $requiredFields = ['api_key', 'merchant_order_no', 'product_code', 'amount', 'subject', 'sign'];
+            // 验证必填参数（subject改为可选，有默认值）
+            $requiredFields = ['api_key', 'merchant_order_no', 'product_code', 'amount', 'sign'];
             $validationErrors = [];
             foreach ($requiredFields as $field) {
                 if (empty($params[$field])) {
@@ -120,18 +120,42 @@ class OrderController
             );
             
             // 验证商户
-            $merchant = Merchant::where('api_key', $params['api_key'])
-                ->where('status', Merchant::STATUS_ENABLED)
-                ->first();
+            $apiKey = $params['api_key'] ?? '';
+            $merchant = Merchant::where('api_key', $apiKey)->first();
             
             if (!$merchant) {
+                Log::warning('API密钥不存在（创建订单）', [
+                    'api_key' => $apiKey,
+                    'api_key_length' => strlen($apiKey),
+                    'request_ip' => $request->getRealIp(),
+                    'user_agent' => $request->header('user-agent', ''),
+                    'trace_id' => $traceId
+                ]);
                 return $this->error('无效的API密钥或商户已被禁用');
             }
             
-            // 验证签名
+            if ($merchant->status != Merchant::STATUS_ENABLED) {
+                Log::warning('商户已被禁用（创建订单）', [
+                    'merchant_id' => $merchant->id,
+                    'merchant_name' => $merchant->merchant_name,
+                    'status' => $merchant->status,
+                    'api_key' => substr($apiKey, 0, 10) . '...',
+                    'request_ip' => $request->getRealIp(),
+                    'trace_id' => $traceId
+                ]);
+                return $this->error('无效的API密钥或商户已被禁用');
+            }
+            
+            // 验证签名（在设置默认值之前，使用原始参数）
+            // 注意：subject和body如果是空字符串，SignatureHelper会跳过它们，不会参与签名计算
             if (!SignatureHelper::verify($params, $merchant->api_secret)) {
                 return $this->error('签名验证失败');
             }
+            
+            // 处理商品描述参数：如果没传递使用默认值（签名验证之后）
+            $defaultSubject = '商品支付';
+            $orderSubject = !empty($params['subject']) && trim($params['subject']) !== '' ? trim($params['subject']) : $defaultSubject;
+            $orderBody = !empty($params['body']) && trim($params['body']) !== '' ? trim($params['body']) : $orderSubject;
             
             // 验证订单金额
             $amount = floatval($params['amount']);
@@ -368,6 +392,8 @@ class OrderController
                     'product_id' => $product->id,
                     'subject_id' => $subject->id,
                     'order_amount' => $amount,
+                    'subject' => $orderSubject,  // 订单标题（商品名称）
+                    'body' => $orderBody,        // 订单描述（商品描述）
                     'pay_status' => Order::PAY_STATUS_CREATED,
                     'notify_status' => Order::NOTIFY_STATUS_PENDING,
                     'notify_times' => 0,
@@ -375,7 +401,7 @@ class OrderController
                     'return_url' => $computedReturnUrl,
                     'client_ip' => $clientIp,
                     'expire_time' => $expireTime,
-                    'remark' => $params['body'] ?? $params['subject'],
+                    'remark' => $orderBody,  // remark字段保存body的内容
                 ]);
                 
                 // 节点5：订单数据持久化
@@ -589,11 +615,25 @@ class OrderController
             }
             
             // 验证商户
-            $merchant = Merchant::where('api_key', $params['api_key'])
-                ->where('status', Merchant::STATUS_ENABLED)
-                ->first();
+            $apiKey = $params['api_key'] ?? '';
+            $merchant = Merchant::where('api_key', $apiKey)->first();
             
             if (!$merchant) {
+                Log::warning('API密钥不存在（查询订单）', [
+                    'api_key' => $apiKey,
+                    'api_key_length' => strlen($apiKey),
+                    'request_ip' => $request->getRealIp()
+                ]);
+                return $this->error('无效的API密钥或商户已被禁用');
+            }
+            
+            if ($merchant->status != Merchant::STATUS_ENABLED) {
+                Log::warning('商户已被禁用（查询订单）', [
+                    'merchant_id' => $merchant->id,
+                    'merchant_name' => $merchant->merchant_name,
+                    'status' => $merchant->status,
+                    'api_key' => substr($apiKey, 0, 10) . '...'
+                ]);
                 return $this->error('无效的API密钥或商户已被禁用');
             }
             
@@ -692,11 +732,25 @@ class OrderController
             }
             
             // 验证商户
-            $merchant = Merchant::where('api_key', $params['api_key'])
-                ->where('status', Merchant::STATUS_ENABLED)
-                ->first();
+            $apiKey = $params['api_key'] ?? '';
+            $merchant = Merchant::where('api_key', $apiKey)->first();
             
             if (!$merchant) {
+                Log::warning('API密钥不存在（关闭订单）', [
+                    'api_key' => $apiKey,
+                    'api_key_length' => strlen($apiKey),
+                    'request_ip' => $request->getRealIp()
+                ]);
+                return $this->error('无效的API密钥或商户已被禁用');
+            }
+            
+            if ($merchant->status != Merchant::STATUS_ENABLED) {
+                Log::warning('商户已被禁用（关闭订单）', [
+                    'merchant_id' => $merchant->id,
+                    'merchant_name' => $merchant->merchant_name,
+                    'status' => $merchant->status,
+                    'api_key' => substr($apiKey, 0, 10) . '...'
+                ]);
                 return $this->error('无效的API密钥或商户已被禁用');
             }
             

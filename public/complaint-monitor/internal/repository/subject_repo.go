@@ -37,10 +37,10 @@ func (r *SubjectRepository) FindByID(id int) (*model.Subject, error) {
 // FindByAppID 根据AppID查找主体
 func (r *SubjectRepository) FindByAppID(appID string) (*model.Subject, error) {
 	var subject model.Subject
-	err := r.db.Where("app_id = ?", appID).First(&subject).Error
+	err := r.db.Where("alipay_app_id = ?", appID).First(&subject).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			return nil, fmt.Errorf("主体不存在: app_id=%s", appID)
+			return nil, fmt.Errorf("主体不存在: alipay_app_id=%s", appID)
 		}
 		return nil, fmt.Errorf("查询主体失败: %w", err)
 	}

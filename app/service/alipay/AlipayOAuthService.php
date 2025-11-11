@@ -14,16 +14,245 @@ use Webman\Event\Event;
 class AlipayOAuthService
 {
     /**
+     * 获取OAuth授权配置（优先使用.env配置，如果没有则使用支付主体配置）
+     * @param array|null $paymentInfo 支付配置信息（可选，如果.env未配置则使用此配置）
+     * @return array OAuth授权配置
+     * @throws Exception
+     */
+    public static function getOAuthConfig(?array $paymentInfo = null): array
+    {
+        // 检查是否启用授权专用配置
+        $oauthEnabled = env('OAUTH_ALIPAY_ENABLED', false);
+
+        if ($oauthEnabled) {
+            Log::info('[步骤1] 开始读取.env配置', ['oauth_enabled' => $oauthEnabled]);
+            
+            // 使用.env中的授权专用配置
+            // 优先从$_ENV读取，因为.env文件可能通过多种方式加载
+            $appIdFromEnv = $_ENV['OAUTH_ALIPAY_APP_ID'] ?? null;
+            $appIdFromServer = $_SERVER['OAUTH_ALIPAY_APP_ID'] ?? null;
+            $appIdFromEnvFunc = env('OAUTH_ALIPAY_APP_ID', '');
+            
+            Log::info('[步骤2] 读取AppID', [
+                'from_ENV' => $appIdFromEnv ? substr($appIdFromEnv, 0, 10) . '...' : 'null',
+                'from_SERVER' => $appIdFromServer ? substr($appIdFromServer, 0, 10) . '...' : 'null',
+                'from_env_func' => $appIdFromEnvFunc ? substr($appIdFromEnvFunc, 0, 10) . '...' : 'empty',
+            ]);
+            
+            $appId = $appIdFromEnv ?? $appIdFromServer ?? $appIdFromEnvFunc;
+            
+            $privateKeyFromEnv = $_ENV['OAUTH_ALIPAY_APP_PRIVATE_KEY'] ?? null;
+            $privateKeyFromServer = $_SERVER['OAUTH_ALIPAY_APP_PRIVATE_KEY'] ?? null;
+            $privateKeyFromEnvFunc = env('OAUTH_ALIPAY_APP_PRIVATE_KEY', '');
+            
+            Log::info('[步骤3] 读取私钥原始数据', [
+                'from_ENV_length' => $privateKeyFromEnv ? strlen($privateKeyFromEnv) : 0,
+                'from_ENV_preview' => $privateKeyFromEnv ? substr($privateKeyFromEnv, 0, 50) . '...' : 'null',
+                'from_SERVER_length' => $privateKeyFromServer ? strlen($privateKeyFromServer) : 0,
+                'from_SERVER_preview' => $privateKeyFromServer ? substr($privateKeyFromServer, 0, 50) . '...' : 'null',
+                'from_env_func_length' => strlen($privateKeyFromEnvFunc),
+                'from_env_func_preview' => $privateKeyFromEnvFunc ? substr($privateKeyFromEnvFunc, 0, 50) . '...' : 'empty',
+                'from_ENV_has_backslash_n' => $privateKeyFromEnv ? (strpos($privateKeyFromEnv, '\\n') !== false) : false,
+                'from_ENV_has_real_newline' => $privateKeyFromEnv ? (strpos($privateKeyFromEnv, "\n") !== false) : false,
+            ]);
+            
+            $appPrivateKey = $privateKeyFromEnv ?? $privateKeyFromServer ?? $privateKeyFromEnvFunc;
+            
+            // 必须同时配置AppID和私钥
+            if (empty($appId) || empty($appPrivateKey)) {
+                Log::error('[步骤4] OAuth授权配置不完整', [
+                    'app_id_set' => !empty($appId),
+                    'app_id' => $appId ?: '未设置',
+                    'private_key_set' => !empty($appPrivateKey),
+                    'private_key_length' => strlen($appPrivateKey),
+                    '_ENV_set' => isset($_ENV['OAUTH_ALIPAY_APP_PRIVATE_KEY']),
+                    '_SERVER_set' => isset($_SERVER['OAUTH_ALIPAY_APP_PRIVATE_KEY']),
+                ]);
+                throw new Exception("OAuth授权配置不完整：请检查.env文件中的OAUTH_ALIPAY_APP_ID和OAUTH_ALIPAY_APP_PRIVATE_KEY");
+            }
+            
+            Log::info('[步骤5] 开始处理私钥换行符', [
+                'before_length' => strlen($appPrivateKey),
+                'before_has_backslash_n' => strpos($appPrivateKey, '\\n') !== false,
+                'before_has_real_newline' => strpos($appPrivateKey, "\n") !== false,
+                'before_preview' => substr($appPrivateKey, 0, 100),
+            ]);
+            
+            // 处理私钥中的换行符
+            // 1. 替换\n字符串为实际换行符（处理转义字符）
+            $appPrivateKey = str_replace(['\\n', '\n'], "\n", $appPrivateKey);
+            // 2. 清理多余的空白字符，但保留换行符
+            $appPrivateKey = trim($appPrivateKey);
+            
+            Log::info('[步骤6] 私钥换行符处理完成', [
+                'after_length' => strlen($appPrivateKey),
+                'after_has_real_newline' => strpos($appPrivateKey, "\n") !== false,
+                'newline_count' => substr_count($appPrivateKey, "\n"),
+                'after_preview' => substr($appPrivateKey, 0, 100),
+                'after_end_preview' => substr($appPrivateKey, -100),
+            ]);
+            
+            // 验证私钥格式并测试解析
+            $hasBegin = strpos($appPrivateKey, '-----BEGIN') !== false;
+            $hasEnd = strpos($appPrivateKey, '-----END') !== false;
+            
+            Log::info('[步骤7] 检查私钥格式标记', [
+                'has_begin' => $hasBegin,
+                'has_end' => $hasEnd,
+                'begin_pos' => $hasBegin ? strpos($appPrivateKey, '-----BEGIN') : -1,
+                'end_pos' => $hasEnd ? strpos($appPrivateKey, '-----END') : -1,
+            ]);
+            
+            // 处理私钥格式：Alipay SDK期望纯Base64内容（不包含BEGIN/END标记）
+            // SDK会自动添加BEGIN/END标记并使用wordwrap()格式化
+            $privateKeyForSDK = $appPrivateKey;
+            
+            // 如果私钥包含BEGIN/END标记，提取出纯Base64内容
+            if ($hasBegin || $hasEnd) {
+                Log::info('[步骤7.5] 检测到私钥包含BEGIN/END标记，提取纯Base64内容', [
+                    'has_begin' => $hasBegin,
+                    'has_end' => $hasEnd,
+                    'original_length' => strlen($appPrivateKey),
+                ]);
+                
+                // 移除BEGIN和END标记，提取纯Base64内容
+                $privateKeyForSDK = preg_replace('/-----BEGIN[^-]+-----/', '', $appPrivateKey);
+                $privateKeyForSDK = preg_replace('/-----END[^-]+-----/', '', $privateKeyForSDK);
+                // 移除所有空白字符（包括换行符、空格等）
+                $privateKeyForSDK = preg_replace('/\s+/', '', $privateKeyForSDK);
+                
+                Log::info('[步骤7.6] 已提取纯Base64私钥内容', [
+                    'extracted_length' => strlen($privateKeyForSDK),
+                    'extracted_preview' => substr($privateKeyForSDK, 0, 50) . '...',
+                ]);
+            }
+            
+            // 验证提取后的私钥（使用完整格式进行openssl验证）
+            // 构建用于验证的完整PEM格式私钥
+            $privateKeyForVerification = "-----BEGIN RSA PRIVATE KEY-----\n" . 
+                wordwrap($privateKeyForSDK, 64, "\n", true) . 
+                "\n-----END RSA PRIVATE KEY-----";
+            
+            Log::info('[步骤7.7] 构建验证用的完整PEM格式私钥', [
+                'verification_key_length' => strlen($privateKeyForVerification),
+                'base64_key_length' => strlen($privateKeyForSDK),
+            ]);
+            
+            Log::info('[步骤9] 开始openssl验证私钥');
+            openssl_error_string(); // 清除之前的错误
+            
+            // 尝试使用RSA格式
+            $privateKeyResource = @openssl_pkey_get_private($privateKeyForVerification);
+            
+            // 如果RSA格式失败，尝试PKCS#8格式
+            if ($privateKeyResource === false) {
+                Log::warning('[步骤9.5] RSA格式验证失败，尝试PKCS#8格式');
+                $privateKeyForVerificationPKCS8 = "-----BEGIN PRIVATE KEY-----\n" . 
+                    wordwrap($privateKeyForSDK, 64, "\n", true) . 
+                    "\n-----END PRIVATE KEY-----";
+                $privateKeyResource = @openssl_pkey_get_private($privateKeyForVerificationPKCS8);
+                if ($privateKeyResource !== false) {
+                    Log::info('[步骤9.6] PKCS#8格式验证成功');
+                }
+            }
+            
+            if ($privateKeyResource === false) {
+                $opensslErrors = [];
+                while (($error = openssl_error_string()) !== false) {
+                    $opensslErrors[] = $error;
+                }
+                $opensslErrorStr = implode('; ', $opensslErrors);
+                
+                Log::error('[步骤10] OAuth私钥openssl验证失败', [
+                    'app_id' => $appId,
+                    'openssl_errors' => $opensslErrors,
+                    'openssl_error_str' => $opensslErrorStr,
+                    'base64_key_length' => strlen($privateKeyForSDK),
+                    'base64_key_preview' => substr($privateKeyForSDK, 0, 50) . '...' . substr($privateKeyForSDK, -20),
+                    'verification_key_preview' => substr($privateKeyForVerification, 0, 100),
+                ]);
+                
+                // 不抛出异常，继续使用私钥（Alipay SDK可能会自己处理）
+                Log::warning('[步骤10.5] 私钥openssl验证失败，但继续使用（Alipay SDK可能会自己处理格式）');
+            } else {
+                Log::info('[步骤11] openssl验证私钥成功');
+                // PHP 8.0+ 中 openssl_free_key() 已被弃用，资源会自动释放
+            }
+            
+            // 使用提取的纯Base64内容作为最终私钥（SDK会自动格式化）
+            // 这是Alipay SDK期望的格式
+            $appPrivateKey = $privateKeyForSDK;
+            
+            Log::info('[步骤11.5] 最终私钥格式（用于SDK）', [
+                'final_key_length' => strlen($appPrivateKey),
+                'final_key_preview' => substr($appPrivateKey, 0, 50) . '...',
+                'is_pure_base64' => !preg_match('/-----BEGIN|-----END/', $appPrivateKey),
+            ]);
+
+            // 如果.env中配置了证书路径，使用.env的；否则使用支付主体的证书
+            $config = [
+                'appid' => $appId,
+                'AppPrivateKey' => $appPrivateKey,
+                'alipayCertPublicKey' => !empty($alipayPublicCertPath) ? $alipayPublicCertPath : ($paymentInfo['alipayCertPublicKey'] ?? ''),
+                'alipayRootCert' => !empty($alipayRootCertPath) ? $alipayRootCertPath : ($paymentInfo['alipayRootCert'] ?? ''),
+                'appCertPublicKey' => !empty($appPublicCertPath) ? $appPublicCertPath : ($paymentInfo['appCertPublicKey'] ?? ''),
+                'notify_url' => config('app.url') . '/api/v1/payment/notify/alipay',
+                'sandbox' => false,
+            ];
+            
+            // 如果证书路径为空，尝试从支付配置中获取
+            if (empty($config['alipayCertPublicKey']) && !empty($paymentInfo)) {
+                $config['alipayCertPublicKey'] = $paymentInfo['alipayCertPublicKey'] ?? '';
+                $config['alipayRootCert'] = $paymentInfo['alipayRootCert'] ?? '';
+                $config['appCertPublicKey'] = $paymentInfo['appCertPublicKey'] ?? '';
+            }
+            
+            Log::info('[步骤14] 配置构建完成', [
+                'app_id' => $appId,
+                'has_private_key' => !empty($appPrivateKey),
+                'private_key_length' => strlen($appPrivateKey),
+                'private_key_newline_count' => substr_count($appPrivateKey, "\n"),
+                'has_cert' => !empty($alipayPublicCertPath) || !empty($alipayRootCertPath) || !empty($appPublicCertPath),
+                'cert_paths' => [
+                    'alipay_public' => $config['alipayCertPublicKey'],
+                    'alipay_root' => $config['alipayRootCert'],
+                    'app_public' => $config['appCertPublicKey']
+                ]
+            ]);
+            
+            Log::info('[步骤15] 返回OAuth配置，私钥预览', [
+                'private_key_first_100' => substr($appPrivateKey, 0, 100),
+                'private_key_last_100' => substr($appPrivateKey, -100),
+            ]);
+            
+            return $config;
+        } else {
+            // 使用支付主体配置
+            if (empty($paymentInfo)) {
+                throw new Exception("OAuth授权配置缺失：未启用.env配置且未提供支付配置");
+            }
+
+            Log::info("使用支付主体的支付宝配置进行OAuth授权", [
+                'app_id' => $paymentInfo['appid'] ?? ''
+            ]);
+
+            return $paymentInfo;
+        }
+    }
+    
+    /**
      * 获取OAuth授权URL
      * @param array $params 授权参数
-     * @param array $paymentInfo 支付配置信息
+     * @param array|null $paymentInfo 支付配置信息（可选，如果.env未配置则使用此配置）
      * @return string 授权URL
      * @throws Exception
      */
-    public static function getAuthUrl(array $params, array $paymentInfo): string
+    public static function getAuthUrl(array $params, ?array $paymentInfo = null): string
     {
         try {
-            $config = AlipayConfig::getConfig($paymentInfo);
+            // 获取OAuth授权配置（优先使用.env）
+            $oauthConfig = self::getOAuthConfig($paymentInfo);
+            $config = AlipayConfig::getConfig($oauthConfig);
             
             $result = Factory::setOptions($config)
                 ->base()
@@ -36,7 +265,8 @@ class AlipayOAuthService
             
             Log::info("支付宝OAuth授权URL生成成功", [
                 'redirect_uri' => $params['redirect_uri'],
-                'scope' => $params['scope'] ?? 'auth_user'
+                'scope' => $params['scope'] ?? 'auth_user',
+                'app_id' => $oauthConfig['appid'] ?? ''
             ]);
             
             return $result;
@@ -53,35 +283,77 @@ class AlipayOAuthService
     /**
      * 通过授权码获取访问令牌
      * @param string $authCode 授权码
-     * @param array $paymentInfo 支付配置信息
+     * @param array|null $paymentInfo 支付配置信息（可选，如果.env未配置则使用此配置）
      * @return array 用户信息
      * @throws Exception
      */
-    public static function getTokenByAuthCode(string $authCode, array $paymentInfo): array
+    public static function getTokenByAuthCode(string $authCode, ?array $paymentInfo = null): array
     {
         try {
-            Log::info("开始获取OAuth令牌", [
+            // 获取OAuth授权配置（优先使用.env）
+            $oauthConfig = self::getOAuthConfig($paymentInfo);
+            
+            Log::info("[OAuth-步骤1] 开始获取OAuth令牌", [
                 'auth_code_length' => strlen($authCode),
                 'auth_code_preview' => substr($authCode, 0, 20) . '...',
-                'payment_info_keys' => array_keys($paymentInfo)
+                'app_id' => $oauthConfig['appid'] ?? '',
+                'use_env_config' => env('OAUTH_ALIPAY_ENABLED', false),
+                'oauth_config_keys' => array_keys($oauthConfig),
+                'has_AppPrivateKey' => isset($oauthConfig['AppPrivateKey']),
+                'AppPrivateKey_length' => isset($oauthConfig['AppPrivateKey']) ? strlen($oauthConfig['AppPrivateKey']) : 0,
             ]);
             
-            $config = AlipayConfig::getConfig($paymentInfo);
+            Log::info("[OAuth-步骤2] 调用AlipayConfig::getConfig", [
+                'config_appid' => $oauthConfig['appid'] ?? '',
+                'config_has_private_key' => isset($oauthConfig['AppPrivateKey']),
+                'config_private_key_preview' => isset($oauthConfig['AppPrivateKey']) ? substr($oauthConfig['AppPrivateKey'], 0, 50) . '...' : 'N/A',
+            ]);
             
-            Log::info("AlipayConfig获取成功", [
+            $config = AlipayConfig::getConfig($oauthConfig);
+            
+            Log::info("[OAuth-步骤3] AlipayConfig::getConfig完成", [
+                'config_appid' => $config->appId ?? '',
+                'config_gateway' => $config->gatewayHost ?? '',
+                'config_alipay_cert_path' => $config->alipayCertPath ?? '',
+                'config_alipay_root_cert_path' => $config->alipayRootCertPath ?? '',
+                'config_merchant_cert_path' => $config->merchantCertPath ?? '',
+                'config_has_private_key' => !empty($config->merchantPrivateKey),
+                'config_private_key_length' => strlen($config->merchantPrivateKey ?? ''),
+            ]);
+            
+            Log::info("[OAuth-步骤4] 准备调用Factory.getToken", [
                 'app_id' => $config->appId ?? 'not_set',
-                'gateway_host' => $config->gatewayHost ?? 'not_set'
+                'gateway_host' => $config->gatewayHost ?? 'not_set',
+                'private_key_length' => strlen($config->merchantPrivateKey ?? ''),
+                'private_key_has_newlines' => strpos($config->merchantPrivateKey ?? '', "\n") !== false,
+                'private_key_first_50' => substr($config->merchantPrivateKey ?? '', 0, 50),
+                'private_key_last_50' => substr($config->merchantPrivateKey ?? '', -50),
+                'auth_code' => substr($authCode, 0, 20) . '...',
             ]);
             
-            $result = Factory::setOptions($config)
-                ->base()
-                ->oauth()
-                ->getToken($authCode);
-            
-            Log::info("Factory.getToken调用完成", [
-                'result_type' => get_class($result),
-                'result_properties' => get_object_vars($result)
-            ]);
+            try {
+                Log::info("[OAuth-步骤5] 开始调用Factory.setOptions");
+                $factory = Factory::setOptions($config);
+                Log::info("[OAuth-步骤6] Factory.setOptions完成，调用base()");
+                $base = $factory->base();
+                Log::info("[OAuth-步骤7] base()完成，调用oauth()");
+                $oauth = $base->oauth();
+                Log::info("[OAuth-步骤8] oauth()完成，调用getToken()");
+                $result = $oauth->getToken($authCode);
+                Log::info("[OAuth-步骤9] getToken()调用完成", [
+                    'result_type' => get_class($result),
+                    'result_properties' => array_keys(get_object_vars($result))
+                ]);
+            } catch (\Exception $e) {
+                Log::error("[OAuth-步骤X] getToken调用异常", [
+                    'error_message' => $e->getMessage(),
+                    'error_code' => $e->getCode(),
+                    'error_file' => $e->getFile(),
+                    'error_line' => $e->getLine(),
+                    'trace' => $e->getTraceAsString(),
+                ]);
+                throw $e;
+            }
             
             // 统一使用body属性，如果不存在则尝试httpBody
             if (property_exists($result, 'body')) {
@@ -176,14 +448,16 @@ class AlipayOAuthService
     /**
      * 刷新访问令牌
      * @param string $refreshToken 刷新令牌
-     * @param array $paymentInfo 支付配置信息
+     * @param array|null $paymentInfo 支付配置信息（可选，如果.env未配置则使用此配置）
      * @return array 新的令牌信息
      * @throws Exception
      */
-    public static function refreshToken(string $refreshToken, array $paymentInfo): array
+    public static function refreshToken(string $refreshToken, ?array $paymentInfo = null): array
     {
         try {
-            $config = AlipayConfig::getConfig($paymentInfo);
+            // 获取OAuth授权配置（优先使用.env）
+            $oauthConfig = self::getOAuthConfig($paymentInfo);
+            $config = AlipayConfig::getConfig($oauthConfig);
             
             $result = Factory::setOptions($config)
                 ->base()
@@ -236,14 +510,16 @@ class AlipayOAuthService
     /**
      * 获取用户信息
      * @param string $accessToken 访问令牌
-     * @param array $paymentInfo 支付配置信息
+     * @param array|null $paymentInfo 支付配置信息（可选，如果.env未配置则使用此配置）
      * @return array 用户信息
      * @throws Exception
      */
-    public static function getUserInfo(string $accessToken, array $paymentInfo): array
+    public static function getUserInfo(string $accessToken, ?array $paymentInfo = null): array
     {
         try {
-            $config = AlipayConfig::getConfig($paymentInfo);
+            // 获取OAuth授权配置（优先使用.env）
+            $oauthConfig = self::getOAuthConfig($paymentInfo);
+            $config = AlipayConfig::getConfig($oauthConfig);
             
             $result = Factory::setOptions($config)
                 ->base()
