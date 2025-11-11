@@ -108,23 +108,28 @@ func (cm *CertManager) LoadCert(subject *model.Subject) (*alipay.Client, error) 
 		return nil, fmt.Errorf("创建支付宝客户端失败: %w", err)
 	}
 
-	// 加载证书内容（不使用文件）
-	// 注意：alipay SDK v3的证书加载方法名可能不同，这里提供框架
-	// 实际项目中需要根据SDK版本调整方法名
+	// 加载证书内容（从内存，不使用文件）
+	// 使用SDK提供的方法加载证书
+	if appCert != "" {
+		if err := client.LoadAppCertPublicKey(appCert); err != nil {
+			return nil, fmt.Errorf("加载应用证书公钥失败: %w", err)
+		}
+		cm.logger.Debug("应用证书公钥加载成功", zap.Int("subject_id", subject.ID))
+	}
 
-	// TODO: 根据实际SDK版本调整证书加载方法
-	// 常见方法名：
-	// - LoadAppPublicCertFromData
-	// - LoadAliPayRootCertFromData
-	// - LoadAlipayCertPublicKeyFromData
+	if alipayRootCert != "" {
+		if err := client.LoadAliPayRootCert(alipayRootCert); err != nil {
+			return nil, fmt.Errorf("加载支付宝根证书失败: %w", err)
+		}
+		cm.logger.Debug("支付宝根证书加载成功", zap.Int("subject_id", subject.ID))
+	}
 
-	// 临时使用证书内容作为注释，避免编译错误
-	_ = appCert
-	_ = alipayRootCert
-	_ = alipayCert
-
-	cm.logger.Warn("证书加载方法需要根据SDK版本调整",
-		zap.Int("subject_id", subject.ID))
+	if alipayCert != "" {
+		if err := client.LoadAlipayCertPublicKey(alipayCert); err != nil {
+			return nil, fmt.Errorf("加载支付宝证书公钥失败: %w", err)
+		}
+		cm.logger.Debug("支付宝证书公钥加载成功", zap.Int("subject_id", subject.ID))
+	}
 
 	// 缓存
 	cachedCert := &CachedCert{

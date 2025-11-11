@@ -21,6 +21,7 @@ type Manager struct {
 	subjectRepo      *repository.SubjectRepository
 	complaintRepo    *repository.ComplaintRepository
 	blacklistRepo    *repository.BlacklistRepository
+	orderRepo        *repository.OrderRepository
 	certManager      *cert.CertManager
 	lockManager      *lock.DistributedLock
 	alipayService    *service.AlipayService
@@ -39,6 +40,7 @@ func NewManager(
 	subjectRepo *repository.SubjectRepository,
 	complaintRepo *repository.ComplaintRepository,
 	blacklistRepo *repository.BlacklistRepository,
+	orderRepo *repository.OrderRepository,
 	certManager *cert.CertManager,
 	lockManager *lock.DistributedLock,
 	alipayService *service.AlipayService,
@@ -50,6 +52,7 @@ func NewManager(
 		subjectRepo:      subjectRepo,
 		complaintRepo:    complaintRepo,
 		blacklistRepo:    blacklistRepo,
+		orderRepo:        orderRepo,
 		certManager:      certManager,
 		lockManager:      lockManager,
 		alipayService:    alipayService,
@@ -147,6 +150,7 @@ func (m *Manager) createWorker(subject *model.Subject) *SubjectWorker {
 		m.subjectRepo,
 		m.complaintRepo,
 		m.blacklistRepo,
+		m.orderRepo,
 		m.certManager,
 		m.lockManager,
 		m.alipayService,

@@ -23,41 +23,105 @@ class AlipayRefundService
         try {
             $config = AlipayConfig::getConfig($paymentInfo);
             
-            $result = Factory::setOptions($config)
-                ->payment()
-                ->common()
-                ->refund(
-                    $refundInfo['order_number'],
-                    $refundInfo['refund_amount'],
-                    $refundInfo['refund_number'],
-                    $refundInfo['refund_reason'] ?? ''
-                );
+            // 支付宝退款接口参数说明：
+            // - out_trade_no: 商户订单号（必填，创建订单时使用的订单号）
+            // - refund_amount: 退款金额（必填）
+            // - out_request_no: 退款请求号（可选，用于标识退款请求，如果不传，支付宝会自动生成）
+            // - refund_reason: 退款原因（可选）
             
-            $response = json_decode($result->body, true);
+            // 注意：支付宝EasySDK的 refund 方法只支持 out_trade_no 和 refund_amount 两个参数
+            // 如果需要传递 out_request_no 和 refund_reason，需要使用通用API
+            
+            $outTradeNo = $refundInfo['order_number'] ?? ''; // 商户订单号（out_trade_no）
+            $refundAmount = $refundInfo['refund_amount'] ?? '0'; // 退款金额
+            $outRequestNo = $refundInfo['refund_number'] ?? ''; // 退款请求号（out_request_no，可选）
+            $refundReason = $refundInfo['refund_reason'] ?? ''; // 退款原因（可选）
+            
+            if (empty($outTradeNo)) {
+                throw new Exception("订单号不能为空");
+            }
+            
+            if (empty($refundAmount) || floatval($refundAmount) <= 0) {
+                throw new Exception("退款金额必须大于0");
+            }
+            
+            Log::info("支付宝退款：准备调用退款接口", [
+                'out_trade_no' => $outTradeNo,
+                'refund_amount' => $refundAmount,
+                'out_request_no' => $outRequestNo,
+                'refund_reason' => $refundReason,
+                'note' => '使用通用API调用 alipay.trade.refund，支持传递 out_request_no 和 refund_reason'
+            ]);
+            
+            // 使用通用API调用退款接口，支持传递 out_request_no 和 refund_reason
+            $textParams = []; // 文本参数（可选参数，如app_auth_token等）
+            $bizParams = [
+                'out_trade_no' => $outTradeNo,
+                'refund_amount' => $refundAmount
+            ];
+            
+            // 如果提供了退款请求号，添加到参数中
+            if (!empty($outRequestNo)) {
+                $bizParams['out_request_no'] = $outRequestNo;
+            }
+            
+            // 如果提供了退款原因，添加到参数中
+            if (!empty($refundReason)) {
+                $bizParams['refund_reason'] = $refundReason;
+            }
+            
+            $result = Factory::setOptions($config)
+                ->util()
+                ->generic()
+                ->execute('alipay.trade.refund', $textParams, $bizParams);
+            
+            // 检查响应状态
+            if ($result->code !== '10000') {
+                $errorMsg = $result->msg ?? '未知错误';
+                $subMsg = $result->subCode ?? '';
+                $subMsgDetail = $result->subMsg ?? '';
+                throw new Exception("退款失败: {$errorMsg}" . ($subMsg ? " (sub_code: {$subMsg})" : "") . ($subMsgDetail ? " - {$subMsgDetail}" : ""));
+            }
+            
+            // 解析响应体
+            if (empty($result->httpBody)) {
+                throw new Exception('支付宝退款响应为空');
+            }
+            
+            $response = json_decode($result->httpBody, true);
+            
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new Exception('支付宝退款响应解析失败: ' . json_last_error_msg());
+            }
             
             if (!isset($response['alipay_trade_refund_response'])) {
-                throw new Exception("退款响应格式错误");
+                throw new Exception('支付宝退款响应格式错误');
             }
             
             $refundResponse = $response['alipay_trade_refund_response'];
             
-            if ($refundResponse['code'] !== '10000') {
-                throw new Exception("退款失败: " . ($refundResponse['msg'] ?? '未知错误'));
+            // 检查响应状态
+            if (isset($refundResponse['code']) && $refundResponse['code'] !== '10000') {
+                $errorMsg = $refundResponse['msg'] ?? '未知错误';
+                $subMsg = $refundResponse['sub_code'] ?? '';
+                $subMsgDetail = $refundResponse['sub_msg'] ?? '';
+                throw new Exception("退款失败: {$errorMsg}" . ($subMsg ? " (sub_code: {$subMsg})" : "") . ($subMsgDetail ? " - {$subMsgDetail}" : ""));
             }
             
             Log::info("支付宝退款创建成功", [
-                'order_number' => $refundInfo['order_number'],
-                'refund_number' => $refundInfo['refund_number'],
-                'refund_amount' => $refundInfo['refund_amount']
+                'out_trade_no' => $outTradeNo,
+                'refund_amount' => $refundAmount,
+                'out_request_no' => $outRequestNo,
+                'refund_response' => $refundResponse
             ]);
             
             return [
-                'order_number' => $refundResponse['out_trade_no'] ?? '',
+                'order_number' => $refundResponse['out_trade_no'] ?? $outTradeNo,
                 'trade_no' => $refundResponse['trade_no'] ?? '',
-                'refund_number' => $refundResponse['out_request_no'] ?? '',
-                'refund_amount' => $refundResponse['refund_fee'] ?? '0',
+                'refund_number' => $refundResponse['out_request_no'] ?? $outRequestNo,
+                'refund_amount' => $refundResponse['refund_fee'] ?? $refundAmount,
                 'refund_status' => $refundResponse['refund_status'] ?? '',
-                'refund_reason' => $refundResponse['refund_reason'] ?? '',
+                'refund_reason' => $refundResponse['refund_reason'] ?? $refundReason,
                 'gmt_refund_pay' => $refundResponse['gmt_refund_pay'] ?? '',
                 'buyer_id' => $refundResponse['buyer_id'] ?? '',
                 'buyer_logon_id' => $refundResponse['buyer_logon_id'] ?? '',
@@ -67,9 +131,11 @@ class AlipayRefundService
             
         } catch (Exception $e) {
             Log::error("支付宝退款创建失败", [
-                'order_number' => $refundInfo['order_number'],
-                'refund_number' => $refundInfo['refund_number'],
-                'error' => $e->getMessage()
+                'order_number' => $refundInfo['order_number'] ?? '',
+                'refund_number' => $refundInfo['refund_number'] ?? '',
+                'refund_amount' => $refundInfo['refund_amount'] ?? '',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
             throw new Exception("退款创建失败: " . $e->getMessage());
         }

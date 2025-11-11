@@ -33,9 +33,10 @@ func (r *BlacklistRepository) Create(blacklist *model.AlipayBlacklist) error {
 }
 
 // FindByAlipayUserID 根据支付宝用户ID查找
-func (r *BlacklistRepository) FindByAlipayUserID(subjectID int, alipayUserID string) (*model.AlipayBlacklist, error) {
+// 注意：现有表结构使用 (alipay_user_id, device_code, ip_address) 作为唯一键
+func (r *BlacklistRepository) FindByAlipayUserID(alipayUserID string) (*model.AlipayBlacklist, error) {
 	var blacklist model.AlipayBlacklist
-	err := r.db.Where("subject_id = ? AND alipay_user_id = ?", subjectID, alipayUserID).First(&blacklist).Error
+	err := r.db.Where("alipay_user_id = ?", alipayUserID).First(&blacklist).Error
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
 			return nil, nil // 不存在返回nil
@@ -45,11 +46,41 @@ func (r *BlacklistRepository) FindByAlipayUserID(subjectID int, alipayUserID str
 	return &blacklist, nil
 }
 
-// Exists 检查是否在黑名单中
-func (r *BlacklistRepository) Exists(subjectID int, alipayUserID string) (bool, error) {
+// FindByUniqueKey 根据唯一键查找（alipay_user_id, device_code, ip_address）
+// 注意：device_code 和 ip_address 可能为 NULL（空字符串会被转换为 NULL）
+func (r *BlacklistRepository) FindByUniqueKey(alipayUserID, deviceCode, ipAddress string) (*model.AlipayBlacklist, error) {
+	var blacklist model.AlipayBlacklist
+	query := r.db.Where("alipay_user_id = ?", alipayUserID)
+
+	// 处理 device_code（可能为 NULL）
+	if deviceCode == "" {
+		query = query.Where("device_code IS NULL")
+	} else {
+		query = query.Where("device_code = ?", deviceCode)
+	}
+
+	// 处理 ip_address（可能为 NULL）
+	if ipAddress == "" {
+		query = query.Where("ip_address IS NULL")
+	} else {
+		query = query.Where("ip_address = ?", ipAddress)
+	}
+
+	err := query.First(&blacklist).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil // 不存在返回nil
+		}
+		return nil, fmt.Errorf("查询黑名单失败: %w", err)
+	}
+	return &blacklist, nil
+}
+
+// Exists 检查是否在黑名单中（仅检查 alipay_user_id）
+func (r *BlacklistRepository) Exists(alipayUserID string) (bool, error) {
 	var count int64
 	err := r.db.Model(&model.AlipayBlacklist{}).
-		Where("subject_id = ? AND alipay_user_id = ?", subjectID, alipayUserID).
+		Where("alipay_user_id = ?", alipayUserID).
 		Count(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("检查黑名单是否存在失败: %w", err)
@@ -57,22 +88,51 @@ func (r *BlacklistRepository) Exists(subjectID int, alipayUserID string) (bool, 
 	return count > 0, nil
 }
 
+// ExistsByUniqueKey 检查是否在黑名单中（使用唯一键）
+// 注意：device_code 和 ip_address 可能为 NULL（空字符串会被转换为 NULL）
+func (r *BlacklistRepository) ExistsByUniqueKey(alipayUserID, deviceCode, ipAddress string) (bool, error) {
+	var count int64
+	query := r.db.Model(&model.AlipayBlacklist{}).
+		Where("alipay_user_id = ?", alipayUserID)
+
+	// 处理 device_code（可能为 NULL）
+	if deviceCode == "" {
+		query = query.Where("device_code IS NULL")
+	} else {
+		query = query.Where("device_code = ?", deviceCode)
+	}
+
+	// 处理 ip_address（可能为 NULL）
+	if ipAddress == "" {
+		query = query.Where("ip_address IS NULL")
+	} else {
+		query = query.Where("ip_address = ?", ipAddress)
+	}
+
+	err := query.Count(&count).Error
+	if err != nil {
+		return false, fmt.Errorf("检查黑名单是否存在失败: %w", err)
+	}
+	return count > 0, nil
+}
+
 // Upsert 插入或更新（使用ON DUPLICATE KEY UPDATE）
+// 注意：唯一键是 (alipay_user_id, device_code, ip_address)
 func (r *BlacklistRepository) Upsert(blacklist *model.AlipayBlacklist) error {
 	// 使用Clauses实现ON DUPLICATE KEY UPDATE
 	err := r.db.Clauses(clause.OnConflict{
-		Columns: []clause.Column{{Name: "subject_id"}, {Name: "alipay_user_id"}},
+		Columns: []clause.Column{
+			{Name: "alipay_user_id"},
+			{Name: "device_code"},
+			{Name: "ip_address"},
+		},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"device_code",
-			"ip_address",
-			"blacklist_type",
-			"risk_level",
-			"complaint_count",
-			"last_complaint_time",
+			"risk_count",
+			"last_risk_time",
 			"remark",
 		}),
 	}).Create(blacklist).Error
-	
+
 	if err != nil {
 		return fmt.Errorf("插入或更新黑名单失败: %w", err)
 	}
@@ -88,78 +148,45 @@ func (r *BlacklistRepository) Update(blacklist *model.AlipayBlacklist) error {
 	return nil
 }
 
-// IncrementComplaintCount 增加投诉次数
-func (r *BlacklistRepository) IncrementComplaintCount(subjectID int, alipayUserID string) error {
-	err := r.db.Model(&model.AlipayBlacklist{}).
-		Where("subject_id = ? AND alipay_user_id = ?", subjectID, alipayUserID).
-		Updates(map[string]interface{}{
-			"complaint_count":      gorm.Expr("complaint_count + 1"),
-			"last_complaint_time":  time.Now(),
-		}).Error
+// IncrementRiskCount 增加风险触发次数
+// 注意：device_code 和 ip_address 可能为 NULL（空字符串会被转换为 NULL）
+func (r *BlacklistRepository) IncrementRiskCount(alipayUserID, deviceCode, ipAddress string) error {
+	query := r.db.Model(&model.AlipayBlacklist{}).
+		Where("alipay_user_id = ?", alipayUserID)
+
+	// 处理 device_code（可能为 NULL）
+	if deviceCode == "" {
+		query = query.Where("device_code IS NULL")
+	} else {
+		query = query.Where("device_code = ?", deviceCode)
+	}
+
+	// 处理 ip_address（可能为 NULL）
+	if ipAddress == "" {
+		query = query.Where("ip_address IS NULL")
+	} else {
+		query = query.Where("ip_address = ?", ipAddress)
+	}
+
+	err := query.Updates(map[string]interface{}{
+		"risk_count":     gorm.Expr("risk_count + 1"),
+		"last_risk_time": time.Now(),
+	}).Error
 	if err != nil {
-		return fmt.Errorf("增加投诉次数失败: %w", err)
+		return fmt.Errorf("增加风险触发次数失败: %w", err)
 	}
 	return nil
 }
 
-// UpdateRiskLevel 更新风险等级
-func (r *BlacklistRepository) UpdateRiskLevel(subjectID int, alipayUserID, riskLevel string) error {
-	err := r.db.Model(&model.AlipayBlacklist{}).
-		Where("subject_id = ? AND alipay_user_id = ?", subjectID, alipayUserID).
-		Update("risk_level", riskLevel).Error
-	if err != nil {
-		return fmt.Errorf("更新风险等级失败: %w", err)
-	}
-	return nil
-}
-
-// FindByRiskLevel 根据风险等级查找
-func (r *BlacklistRepository) FindByRiskLevel(subjectID int, riskLevel string) ([]*model.AlipayBlacklist, error) {
-	var blacklists []*model.AlipayBlacklist
-	err := r.db.Where("subject_id = ? AND risk_level = ?", subjectID, riskLevel).
-		Find(&blacklists).Error
-	if err != nil {
-		return nil, fmt.Errorf("查询风险等级黑名单失败: %w", err)
-	}
-	return blacklists, nil
-}
-
-// CountBySubject 统计主体的黑名单数量
-func (r *BlacklistRepository) CountBySubject(subjectID int) (int64, error) {
+// CountAll 统计所有黑名单数量
+func (r *BlacklistRepository) CountAll() (int64, error) {
 	var count int64
 	err := r.db.Model(&model.AlipayBlacklist{}).
-		Where("subject_id = ?", subjectID).
 		Count(&count).Error
 	if err != nil {
 		return 0, fmt.Errorf("统计黑名单数量失败: %w", err)
 	}
 	return count, nil
-}
-
-// CountByRiskLevel 统计各风险等级的数量
-func (r *BlacklistRepository) CountByRiskLevel(subjectID int) (map[string]int64, error) {
-	type Result struct {
-		RiskLevel string
-		Count     int64
-	}
-	
-	var results []Result
-	err := r.db.Model(&model.AlipayBlacklist{}).
-		Select("risk_level, COUNT(*) as count").
-		Where("subject_id = ?", subjectID).
-		Group("risk_level").
-		Scan(&results).Error
-		
-	if err != nil {
-		return nil, fmt.Errorf("统计风险等级数量失败: %w", err)
-	}
-	
-	counts := make(map[string]int64)
-	for _, result := range results {
-		counts[result.RiskLevel] = result.Count
-	}
-	
-	return counts, nil
 }
 
 // Delete 删除黑名单
@@ -170,4 +197,3 @@ func (r *BlacklistRepository) Delete(id uint) error {
 	}
 	return nil
 }
-

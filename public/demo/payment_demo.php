@@ -93,7 +93,6 @@ class PaymentDemo
             'product_code' => $params['product_code'],
             'amount' => $params['amount'],
             'subject' => $params['subject'],
-            'body' => $params['body'] ?? $params['subject'],
         ];
         
         // 添加可选参数
@@ -102,9 +101,6 @@ class PaymentDemo
         }
         if (isset($params['return_url'])) {
             $requestParams['return_url'] = $params['return_url'];
-        }
-        if (isset($params['auth_code'])) {
-            $requestParams['auth_code'] = $params['auth_code'];
         }
         
         // 生成签名
@@ -152,7 +148,6 @@ if (php_sapi_name() === 'cli') {
                 'product_code' => '9469',
                 'amount' => '0.01',
                 'subject' => '测试商品9469-WAP支付',
-                'body' => '使用产品9469创建的WAP支付测试订单',
                 'notify_url' => 'https://your-domain.com/notify',
                 'return_url' => 'https://your-domain.com/return',
             ]
@@ -164,7 +159,6 @@ if (php_sapi_name() === 'cli') {
                 'product_code' => '9469',
                 'amount' => '0.02',
                 'subject' => '测试商品9469-扫码支付',
-                'body' => '使用产品9469创建的扫码支付测试订单',
                 'notify_url' => 'https://your-domain.com/notify',
                 'return_url' => 'https://your-domain.com/return',
             ]
@@ -176,7 +170,6 @@ if (php_sapi_name() === 'cli') {
                 'product_code' => '9469',
                 'amount' => '0.03',
                 'subject' => '测试商品9469-条码支付',
-                'body' => '使用产品9469创建的条码支付测试订单',
                 'auth_code' => '123456789012345678',
                 'notify_url' => 'https://your-domain.com/notify',
                 'return_url' => 'https://your-domain.com/return',

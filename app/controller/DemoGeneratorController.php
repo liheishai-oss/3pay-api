@@ -37,7 +37,6 @@ class DemoGeneratorController
                         'product_code' => $request->post('product_code', '9469'),
                         'amount' => $request->post('amount', '1'),
                         'subject' => $request->post('subject', '测试商品'),
-                        'body' => $request->post('body', '测试订单'),
                     ];
                     
                     if ($request->post('notify_url')) {
@@ -490,11 +489,6 @@ class DemoGeneratorController
                     </div>
                     
                     <div class="form-group">
-                        <label>订单描述</label>
-                        <textarea name="body">测试订单描述</textarea>
-                    </div>
-                    
-                    <div class="form-group">
                         <label>异步通知地址 (可选)</label>
                         <input type="url" name="notify_url" value="<?= htmlspecialchars($baseUrl . '/demo/merchant/notify') ?>" placeholder="<?= htmlspecialchars($baseUrl . '/demo/merchant/notify') ?>">
                         <small>默认使用内置模拟商户回调地址：/demo/merchant/notify</small>
@@ -603,7 +597,6 @@ class DemoGeneratorController
             document.querySelector('input[name="merchant_order_no"]').value = 'M' + timestamp;
             document.querySelector('input[name="amount"]').value = amount;
             document.querySelector('input[name="subject"]').value = '快速测试商品-' + amount + '元';
-            document.querySelector('textarea[name="body"]').value = '快速测试订单，金额' + amount + '元';
             alert('✅ 已自动填充测试数据，金额: ¥' + amount);
         }
         

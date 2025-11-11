@@ -37,6 +37,25 @@ class CacheKeys
     {
         return "subject:disabled:notify:{$subjectId}";
     }
+    
+    /**
+     * 分账任务队列键
+     * @return string
+     */
+    public static function getRoyaltyQueueKey(): string
+    {
+        return "royalty:queue";
+    }
+    
+    /**
+     * 分账处理中标记键（防止重复处理）
+     * @param int $orderId 订单ID
+     * @return string
+     */
+    public static function getRoyaltyProcessingKey(int $orderId): string
+    {
+        return "royalty:processing:{$orderId}";
+    }
 }
 
 

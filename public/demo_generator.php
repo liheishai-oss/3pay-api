@@ -27,7 +27,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 'product_code' => $_POST['product_code'] ?? '9469',
                 'amount' => $_POST['amount'] ?? '1.00',
                 'subject' => $_POST['subject'] ?? '测试商品',
-                'body' => $_POST['body'] ?? '测试订单',
             ];
             
             if (!empty($_POST['notify_url'])) {
@@ -458,11 +457,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     </div>
                     
                     <div class="form-group">
-                        <label>订单描述</label>
-                        <textarea name="body">测试订单描述</textarea>
-                    </div>
-                    
-                    <div class="form-group">
                         <label>异步通知地址 (可选)</label>
                         <input type="url" name="notify_url" value="<?= htmlspecialchars($baseUrl . '/demo/merchant/notify') ?>" placeholder="https://your-domain.com/notify">
                         <small>默认使用内置模拟商户回调地址：/demo/merchant/notify</small>
@@ -571,7 +565,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             document.querySelector('input[name="merchant_order_no"]').value = 'M' + timestamp;
             document.querySelector('input[name="amount"]').value = amount;
             document.querySelector('input[name="subject"]').value = '快速测试商品-' + amount + '元';
-            document.querySelector('textarea[name="body"]').value = '快速测试订单，金额' + amount + '元';
             alert('✅ 已自动填充测试数据，金额: ¥' + amount);
         }
         

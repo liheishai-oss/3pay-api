@@ -4,7 +4,7 @@ app:
   log_level: "info"
 
 database:
-  host: "mysql"
+  host: "127.0.0.1"  # 本地访问Docker MySQL
   port: 3306
   username: "third_party_payment"
   password: "rA8f@D2kLmZx!3pQ"
@@ -14,7 +14,7 @@ database:
   conn_max_lifetime: 3600
 
 redis:
-  host: "redis"
+  host: "127.0.0.1"  # 本地访问Docker Redis
   port: 6379
   password: ""
   db: 0

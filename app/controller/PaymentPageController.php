@@ -124,6 +124,44 @@ class PaymentPageController
                     'verify_device' => $subject->verify_device ?? 0
                 ]);
                 
+                // 节点14：更新buyer_id到订单表（如果为空）
+                if (empty($order->buyer_id)) {
+                    $order->buyer_id = $buyerId;
+                    $order->save();
+                    
+                    Log::info('OAuth授权后更新buyer_id到订单表', [
+                        'order_number' => $orderNumber,
+                        'buyer_id' => $buyerId,
+                        'old_buyer_id' => '',
+                        'new_buyer_id' => $buyerId
+                    ]);
+                    
+                    // 记录日志
+                    OrderLogService::log(
+                        $traceId,
+                        $orderNumber,
+                        $order->merchant_order_no,
+                        'OAuth',
+                        'INFO',
+                        '节点14-更新buyer_id到订单表',
+                        [
+                            'action' => 'OAuth授权后更新buyer_id',
+                            'buyer_id' => $buyerId,
+                            'update_reason' => 'OAuth授权获取到buyer_id',
+                            'old_buyer_id' => '',
+                            'new_buyer_id' => $buyerId
+                        ],
+                        $request->getRealIp(),
+                        $request->header('user-agent', '')
+                    );
+                } else {
+                    Log::debug('订单表已有buyer_id，跳过更新', [
+                        'order_number' => $orderNumber,
+                        'existing_buyer_id' => $order->buyer_id,
+                        'oauth_buyer_id' => $buyerId
+                    ]);
+                }
+                
                 // 黑名单检查（必选）
                 $blacklistService = new \app\service\AlipayBlacklistService();
                 $checkResult = $blacklistService->checkBlacklist($buyerId, null, $request->getRealIp());
@@ -221,8 +259,8 @@ class PaymentPageController
                     $orderInfo = [
                         'platform_order_no' => $order->platform_order_no,
                         'merchant_order_no' => $order->merchant_order_no,
-                        'subject' => $order->subject,
-                        'body' => $order->body ?? $order->subject,
+                        'subject' => !empty($order->subject) ? $order->subject : '商品支付',
+                        'body' => !empty($order->body) ? $order->body : (!empty($order->subject) ? $order->subject : '商品支付'),
                         'amount' => $order->order_amount,
                         'expire_time' => $order->expire_time,
                         'alipay_pid' => $subject->alipay_pid,
@@ -1078,16 +1116,31 @@ HTML;
             // 构建订单信息
             $orderNo = $order->platform_order_no;
             $amount = number_format($order->order_amount, 2, '.', '');
-            $orderSubject = is_string($order->subject) ? $order->subject : '商品支付';
+            // 处理商品描述：如果没传递使用默认值
+            $defaultSubject = '商品支付';
+            $orderSubject = !empty($order->subject) && is_string($order->subject) && trim($order->subject) !== '' ? trim($order->subject) : $defaultSubject;
             $expireTime = strtotime($order->expire_time);
             
             // 构建 OAuth 授权 URL
+            // 优先使用.env中的授权专用AppID，如果没有则使用支付主体的AppID
+            $oauthAppId = \app\service\alipay\CheckOAuthConfig::getCurrentAppId($subject->alipay_app_id);
+            
+            // 记录OAuth授权配置信息
+            \app\service\alipay\CheckOAuthConfig::logConfig("订单:{$orderNumber}");
+            
             $redirectUri = config('app.app_url', $request->url(true)) . '/oauth/callback';
             $oauthUrl = "https://openauth.alipay.com/oauth2/publicAppAuthorize.htm"
-                . "?app_id=" . $subject->alipay_app_id
+                . "?app_id=" . $oauthAppId
                 . "&scope=auth_user"
                 . "&redirect_uri=" . urlencode($redirectUri)
                 . "&state=" . $orderNumber;
+            
+            Log::info('构建OAuth授权URL', [
+                'oauth_app_id' => $oauthAppId,
+                'use_env_config' => env('OAUTH_ALIPAY_ENABLED', false),
+                'subject_app_id' => $subject->alipay_app_id,
+                'env_app_id' => env('OAUTH_ALIPAY_APP_ID', '')
+            ]);
             
             // 检查是否需要OAuth授权（移动端且没有buyer_id）
             $needOAuth = $isMobile && !$isAlipay && empty($buyerId);
@@ -1134,7 +1187,8 @@ HTML;
                 'hasBuyerId' => !empty($buyerId),
                 'autoPay' => false,  // 不自动触发支付
                 'subjectObj' => $subject,
-                'oauthUrl' => $oauthUrl  // 传递 OAuth URL 给前端
+                'oauthUrl' => $oauthUrl,  // 传递 OAuth URL 给前端
+                'oauthAppId' => $oauthAppId  // 传递OAuth AppID给前端
             ]);
             
         } catch (\Exception $e) {
@@ -1736,7 +1790,9 @@ HTML;
     {
         $orderNo = $order->platform_order_no;
         $amount = number_format($order->order_amount, 2, '.', '');
-        $subject = is_string($order->subject) ? $order->subject : '商品支付';
+        // 处理商品描述：如果没传递使用默认值
+        $defaultSubject = '商品支付';
+        $subject = !empty($order->subject) && is_string($order->subject) ? trim($order->subject) : $defaultSubject;
         
         return raw_view('mock_payment', [
             'orderNo' => $orderNo,
@@ -1760,8 +1816,13 @@ HTML;
     {
         $orderNo = $order->platform_order_no;
         $amount = number_format($order->order_amount, 2, '.', '');
-        $subject = is_string($order->subject) ? $order->subject : '商品支付';
+        // 处理商品描述：如果没传递使用默认值
+        $defaultSubject = '商品支付';
+        $subject = !empty($order->subject) && is_string($order->subject) && trim($order->subject) !== '' ? trim($order->subject) : $defaultSubject;
         $expireTime = strtotime($order->expire_time); // 获取过期时间戳
+        
+        // 获取OAuth授权AppID（优先使用.env中的授权专用AppID）
+        $oauthAppId = \app\service\alipay\CheckOAuthConfig::getCurrentAppId($subjectObj->alipay_app_id);
         
         // 如果是移动端，生成APP调起链接
         $appPayUrl = null;
@@ -1786,7 +1847,8 @@ HTML;
             'needOAuth' => $needOAuth,
             'hasBuyerId' => !empty($buyerId),
             'autoPay' => $autoPay,  // 是否自动触发支付
-            'subjectObj' => $subjectObj  // 传递完整的主体对象，用于获取alipay_app_id
+            'subjectObj' => $subjectObj,  // 传递完整的主体对象，用于获取alipay_app_id
+            'oauthAppId' => $oauthAppId  // 传递OAuth AppID给前端
         ]);
     }
 
@@ -2047,15 +2109,18 @@ HTML;
                 'app_id' => $subject->alipay_app_id
             ]);
             
-            // 获取支付配置
+            // 获取支付配置（作为fallback，如果.env未配置则使用）
             $paymentInfo = PaymentFactory::getPaymentConfig($subject, $product->paymentType);
             
             Log::info('支付配置获取成功', [
                 'order_number' => $orderNumber,
-                'payment_info_keys' => array_keys($paymentInfo)
+                'payment_info_keys' => array_keys($paymentInfo),
+                'use_env_config' => env('OAUTH_ALIPAY_ENABLED', false),
+                'env_app_id' => env('OAUTH_ALIPAY_APP_ID', ''),
+                'subject_app_id' => $subject->alipay_app_id
             ]);
             
-            // 通过授权码获取用户信息
+            // 通过授权码获取用户信息（优先使用.env配置）
             $userInfo = AlipayOAuthService::getTokenByAuthCode($authCode, $paymentInfo);
             
             Log::info('调用AlipayOAuthService成功', [

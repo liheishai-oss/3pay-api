@@ -38,7 +38,7 @@ class OrderController
         $startTime = $searchParams['start_time'] ?? $request->get('start_time', '');
         $endTime = $searchParams['end_time'] ?? $request->get('end_time', '');
 
-        $query = Order::with(['merchant', 'agent', 'product', 'subject']);
+        $query = Order::with(['merchant', 'agent', 'product', 'subject', 'royaltyRecord']);
 
         // 记录调试信息
         \support\Log::info('订单列表查询', [
@@ -103,8 +103,53 @@ class OrderController
         $list = $query->orderBy('id', 'desc')
             ->offset(($page - 1) * $limit)
             ->limit($limit)
-            ->get()
-            ->toArray();
+            ->get();
+
+        // 处理分账状态显示
+        $list = $list->map(function ($order) {
+            $orderArray = $order->toArray();
+            
+            // 计算分账状态显示文本
+            $royaltyStatusText = '-';
+            $royaltyRecord = $order->royaltyRecord;
+            
+            if ($order->pay_status == Order::PAY_STATUS_PAID) {
+                // 订单已支付
+                if ($royaltyRecord) {
+                    // 有分账记录
+                if ($royaltyRecord->royalty_status == \app\model\OrderRoyalty::ROYALTY_STATUS_SUCCESS) {
+                    // 分账成功
+                    if ($order->subject && $order->subject->royalty_type == 'single') {
+                        $royaltyStatusText = '单笔分账';
+                    } elseif ($order->subject && $order->subject->royalty_type == 'merchant') {
+                        $royaltyStatusText = '商家分账';
+                    } else {
+                        $royaltyStatusText = '分账成功';
+                    }
+                    } elseif ($royaltyRecord->royalty_status == \app\model\OrderRoyalty::ROYALTY_STATUS_PENDING) {
+                        // 待分账
+                        $royaltyStatusText = '待分账';
+                    } elseif ($royaltyRecord->royalty_status == \app\model\OrderRoyalty::ROYALTY_STATUS_PROCESSING) {
+                        // 分账中
+                        $royaltyStatusText = '分账中';
+                    } elseif ($royaltyRecord->royalty_status == \app\model\OrderRoyalty::ROYALTY_STATUS_FAILED) {
+                        // 分账失败
+                        $royaltyStatusText = '分账失败';
+                    }
+                } else {
+                    // 没有分账记录，检查是否需要分账
+                    if ($order->subject && $order->subject->royalty_type != 'none') {
+                        // 需要分账但还没有分账记录，显示待分账
+                        $royaltyStatusText = '待分账';
+                    }
+                }
+            }
+            
+            $orderArray['royalty_status_text'] = $royaltyStatusText;
+            $orderArray['royalty_record'] = $royaltyRecord ? $royaltyRecord->toArray() : null;
+            
+            return $orderArray;
+        })->toArray();
 
         \support\Log::info('订单查询结果', [
             'list_count' => count($list),
@@ -127,7 +172,7 @@ class OrderController
         $userData = $request->userData;
         $isAgent = ($userData['user_group_id'] ?? 0) == 3;
 
-        $query = Order::with(['merchant', 'agent', 'product', 'subject']);
+        $query = Order::with(['merchant', 'agent', 'product', 'subject', 'royaltyRecord']);
 
         // 代理商只能看自己的数据
         if ($isAgent) {
@@ -140,7 +185,48 @@ class OrderController
             return error('订单不存在');
         }
 
-        return success($order->toArray());
+        $orderArray = $order->toArray();
+        
+        // 计算分账状态显示文本（与列表逻辑一致）
+        $royaltyStatusText = '-';
+        $royaltyRecord = $order->royaltyRecord;
+        
+        if ($order->pay_status == Order::PAY_STATUS_PAID) {
+            // 订单已支付
+            if ($royaltyRecord) {
+                // 有分账记录
+                if ($royaltyRecord->royalty_status == \app\model\OrderRoyalty::ROYALTY_STATUS_SUCCESS) {
+                    // 分账成功
+                    if ($order->subject && $order->subject->royalty_type == 'single') {
+                        $royaltyStatusText = '单笔分账';
+                    } elseif ($order->subject && $order->subject->royalty_type == 'merchant') {
+                        $royaltyStatusText = '商家分账';
+                    } else {
+                        $royaltyStatusText = '分账成功';
+                    }
+                } elseif ($royaltyRecord->royalty_status == \app\model\OrderRoyalty::ROYALTY_STATUS_PENDING) {
+                    // 待分账
+                    $royaltyStatusText = '待分账';
+                } elseif ($royaltyRecord->royalty_status == \app\model\OrderRoyalty::ROYALTY_STATUS_PROCESSING) {
+                    // 分账中
+                    $royaltyStatusText = '分账中';
+                } elseif ($royaltyRecord->royalty_status == \app\model\OrderRoyalty::ROYALTY_STATUS_FAILED) {
+                    // 分账失败
+                    $royaltyStatusText = '分账失败';
+                }
+            } else {
+                // 没有分账记录，检查是否需要分账
+                if ($order->subject && $order->subject->royalty_type != 'none') {
+                    // 需要分账但还没有分账记录，显示待分账
+                    $royaltyStatusText = '待分账';
+                }
+            }
+        }
+        
+        $orderArray['royalty_status_text'] = $royaltyStatusText;
+        $orderArray['royalty_record'] = $royaltyRecord ? $royaltyRecord->toArray() : null;
+
+        return success($orderArray);
     }
 
     /**

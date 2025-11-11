@@ -51,8 +51,8 @@ class Auth implements MiddlewareInterface
                 // 转换 agent_id 为整数或 null
                 // 如果是代理商但 agent_id 为空，尝试从数据库查询
                 $isAgent = ($userData['is_agent'] ?? '0') === '1';
-                echo "代理检测";
-                print_r($userData);
+//                echo "代理检测";
+//                print_r($userData);
                 if ($isAgent && empty($userData['agent_id'])) {
                     $agent = \app\model\Agent::where('admin_id', $userData['admin_id'])->first();
                     if ($agent) {
