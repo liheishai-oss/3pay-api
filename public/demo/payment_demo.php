@@ -102,9 +102,6 @@ class PaymentDemo
         if (isset($params['return_url'])) {
             $requestParams['return_url'] = $params['return_url'];
         }
-        if (isset($params['auth_code'])) {
-            $requestParams['auth_code'] = $params['auth_code'];
-        }
         
         // 生成签名
         $requestParams['sign'] = $this->generateSign($requestParams);
