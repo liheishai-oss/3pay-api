@@ -34,3 +34,4 @@ func (o *Order) IsPaid() bool {
 	return o.PayStatus == 1
 }
 
+
