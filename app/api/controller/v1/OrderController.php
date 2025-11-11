@@ -10,6 +10,7 @@ use app\common\constants\OrderConstants;
 use app\common\constants\CacheKeys;
 use app\common\helpers\SignatureHelper;
 use app\common\helpers\TraceIdHelper;
+use app\common\helpers\IpWhitelistHelper;
 use app\service\payment\PaymentFactory;
 use app\service\OrderLogService;
 use app\service\OrderAlertService;
@@ -145,6 +146,58 @@ class OrderController
                 return $this->error('无效的API密钥或商户已被禁用');
             }
             
+            // 验证IP白名单
+            $clientIp = $request->getRealIp();
+            if (!empty($merchant->ip_whitelist)) {
+                $ipValidation = IpWhitelistHelper::validateIp($clientIp, $merchant->ip_whitelist);
+                if (!$ipValidation['allowed']) {
+                    Log::warning('IP白名单验证失败（创建订单）', [
+                        'merchant_id' => $merchant->id,
+                        'merchant_name' => $merchant->merchant_name,
+                        'request_ip' => $clientIp,
+                        'whitelist' => $merchant->ip_whitelist,
+                        'trace_id' => $traceId
+                    ]);
+                    
+                    // 节点2.5：IP白名单验证失败
+                    OrderLogService::log(
+                        $traceId,
+                        '',
+                        $params['merchant_order_no'] ?? '',
+                        '创建',
+                        'WARN',
+                        '节点2.5-IP白名单验证',
+                        [
+                            'validation_result' => '失败',
+                            'request_ip' => $clientIp,
+                            'whitelist' => $merchant->ip_whitelist,
+                            'failure_reason' => 'IP地址不在白名单中'
+                        ],
+                        $request->getRealIp(),
+                        $request->header('user-agent', '')
+                    );
+                    
+                    return $this->error('IP地址不在白名单中');
+                }
+                
+                // 节点2.5：IP白名单验证成功
+                OrderLogService::log(
+                    $traceId,
+                    '',
+                    $params['merchant_order_no'] ?? '',
+                    '创建',
+                    'INFO',
+                    '节点2.5-IP白名单验证',
+                    [
+                        'validation_result' => '通过',
+                        'request_ip' => $clientIp,
+                        'whitelist' => $merchant->ip_whitelist
+                    ],
+                    $request->getRealIp(),
+                    $request->header('user-agent', '')
+                );
+            }
+            
             // 验证签名（在设置默认值之前，使用原始参数）
             // 注意：subject如果是空字符串，SignatureHelper会跳过它，不会参与签名计算
             if (!SignatureHelper::verify($params, $merchant->api_secret)) {
@@ -277,8 +330,6 @@ class OrderController
             
             // 异地IP检测（如果主体禁用了异地拉单）
             if (isset($subject->allow_remote_order) && $subject->allow_remote_order == 0) {
-                $currentIp = $request->getRealIp();
-                
                 // 查询该商户在此主体下的第一笔订单IP
                 $firstOrder = Order::where('merchant_id', $merchant->id)
                     ->where('subject_id', $subject->id)
@@ -288,16 +339,16 @@ class OrderController
                 
                 if ($firstOrder && !empty($firstOrder->client_ip)) {
                     // 对比IP地址
-                    if ($firstOrder->client_ip !== $currentIp) {
+                    if ($firstOrder->client_ip !== $clientIp) {
                         Log::warning('检测到异地订单创建', [
                             'merchant_id' => $merchant->id,
                             'subject_id' => $subject->id,
                             'first_order_ip' => $firstOrder->client_ip,
-                            'current_ip' => $currentIp,
+                            'current_ip' => $clientIp,
                             'first_order_no' => $firstOrder->platform_order_no
                         ]);
                         
-                        return $this->error("检测到异地访问。首次IP: {$firstOrder->client_ip}，当前IP: {$currentIp}");
+                        return $this->error("检测到异地访问。首次IP: {$firstOrder->client_ip}，当前IP: {$clientIp}");
                     }
                 }
             }
@@ -359,9 +410,6 @@ class OrderController
                 $request->getRealIp(),
                 $request->header('user-agent', '')
             );
-            
-            // 获取客户端IP
-            $clientIp = $request->getRealIp();
             
             // 计算订单过期时间
             $expireTime = date('Y-m-d H:i:s', time() + OrderConstants::ORDER_EXPIRE_MINUTES * 60);
@@ -635,6 +683,21 @@ class OrderController
                 return $this->error('无效的API密钥或商户已被禁用');
             }
             
+            // 验证IP白名单
+            $clientIp = $request->getRealIp();
+            if (!empty($merchant->ip_whitelist)) {
+                $ipValidation = IpWhitelistHelper::validateIp($clientIp, $merchant->ip_whitelist);
+                if (!$ipValidation['allowed']) {
+                    Log::warning('IP白名单验证失败（查询订单）', [
+                        'merchant_id' => $merchant->id,
+                        'merchant_name' => $merchant->merchant_name,
+                        'request_ip' => $clientIp,
+                        'whitelist' => $merchant->ip_whitelist
+                    ]);
+                    return $this->error('IP地址不在白名单中');
+                }
+            }
+            
             // 验证签名
             if (!SignatureHelper::verify($params, $merchant->api_secret)) {
                 return $this->error('签名验证失败');
@@ -750,6 +813,21 @@ class OrderController
                     'api_key' => substr($apiKey, 0, 10) . '...'
                 ]);
                 return $this->error('无效的API密钥或商户已被禁用');
+            }
+            
+            // 验证IP白名单
+            $clientIp = $request->getRealIp();
+            if (!empty($merchant->ip_whitelist)) {
+                $ipValidation = IpWhitelistHelper::validateIp($clientIp, $merchant->ip_whitelist);
+                if (!$ipValidation['allowed']) {
+                    Log::warning('IP白名单验证失败（关闭订单）', [
+                        'merchant_id' => $merchant->id,
+                        'merchant_name' => $merchant->merchant_name,
+                        'request_ip' => $clientIp,
+                        'whitelist' => $merchant->ip_whitelist
+                    ]);
+                    return $this->error('IP地址不在白名单中');
+                }
             }
             
             // 验证签名

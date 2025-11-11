@@ -5,6 +5,7 @@ namespace app\api\controller\v1;
 use app\model\Order;
 use app\model\Product;
 use app\service\payment\PaymentFactory;
+use app\common\helpers\IpWhitelistHelper;
 use support\Request;
 use support\Log;
 
@@ -49,6 +50,21 @@ class PaymentQueryController
                     'api_key' => substr($apiKey, 0, 10) . '...'
                 ]);
                 return $this->error('无效的API密钥或商户已被禁用');
+            }
+
+            // 验证IP白名单
+            $clientIp = $request->getRealIp();
+            if (!empty($merchant->ip_whitelist)) {
+                $ipValidation = IpWhitelistHelper::validateIp($clientIp, $merchant->ip_whitelist);
+                if (!$ipValidation['allowed']) {
+                    Log::warning('IP白名单验证失败（支付查询）', [
+                        'merchant_id' => $merchant->id,
+                        'merchant_name' => $merchant->merchant_name,
+                        'request_ip' => $clientIp,
+                        'whitelist' => $merchant->ip_whitelist
+                    ]);
+                    return $this->error('IP地址不在白名单中');
+                }
             }
 
             // 验证签名
