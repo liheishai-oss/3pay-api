@@ -148,6 +148,21 @@
             margin: 20px 0;
             border-radius: 4px;
         }
+        .danger {
+            background: #fff1f0;
+            border-left: 4px solid #ff4d4f;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+            color: #cf1322;
+        }
+        .danger h3 {
+            color: #cf1322;
+            margin-top: 0;
+        }
+        .danger ul {
+            margin: 10px 0;
+        }
         .success {
             background: #f6ffed;
             border-left: 4px solid #52c41a;
@@ -433,12 +448,14 @@ api_secret: xyz789 (不参与参数排序，最后添加)</code></pre>
             <li>HTTP状态码必须返回200，响应内容必须为"SUCCESS"</li>
         </ul>
 
-        <h3>熔断机制</h3>
-        <ul>
-            <li>连续超时5次：如果商户回调接口连续5次超时（超过10秒未响应），系统将触发熔断，暂停自动回调5分钟</li>
-            <li>连续非期望响应5次：如果商户回调接口连续5次返回非200状态码或响应内容不是"SUCCESS"，系统将触发熔断，暂停自动回调5分钟</li>
-            <li>熔断恢复：回调成功后自动恢复，或等待5分钟后自动恢复</li>
-        </ul>
+        <div class="danger">
+            <h3>熔断机制</h3>
+            <ul>
+                <li>连续超时5次：如果商户回调接口连续5次超时（超过10秒未响应），系统将触发熔断，暂停自动回调5分钟</li>
+                <li>连续非期望响应5次：如果商户回调接口连续5次返回非200状态码或响应内容不是"SUCCESS"，系统将触发熔断，暂停自动回调5分钟</li>
+                <li>熔断恢复：回调成功后自动恢复，或等待5分钟后自动恢复</li>
+            </ul>
+        </div>
 
         <h2 id="error-code">常见错误码</h2>
         <table>
