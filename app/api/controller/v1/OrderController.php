@@ -28,12 +28,12 @@ class OrderController
      * 
      * 请求参数：
      * - api_key: API密钥
-     * - merchant_order_no: 商户订单号（唯一）
-     * - product_code: 产品编号（4位，如9469）
-     * - amount: 订单金额（元）
-     * - subject: 订单标题（可选，默认：商品支付）
-     * - notify_url: 异步通知地址（可选，使用商户配置的地址）
-     * - return_url: 同步返回地址（可选，使用商户配置的地址）
+     * - merchant_order_no: 商户订单号
+     * - product_code: 产品编号
+     * - amount: 订单金额
+     * - subject: 订单标题
+     * - notify_url: 异步通知地址
+     * - return_url: 同步返回地址
      * - auth_code: 授权码（条码支付时必填）
      * - sign: 签名
      * 
