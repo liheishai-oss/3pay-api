@@ -239,7 +239,16 @@ api_secret: xyz789 (不参与参数排序，最后添加)</code></pre>
             <li>参数排序后：amount, api_key, merchant_order_no, product_code, subject</li>
             <li>拼接字符串：<code>amount=100.00&api_key=ABC123&merchant_order_no=M202501220001&product_code=1001&subject=测试订单&key=xyz789</code></li>
             <li>MD5加密并转大写：<code>sign = MD5(拼接字符串).toUpperCase()</code></li>
+            <li>最终签名值：<code>BA13C5CA2B914B8232F721A6ADEAE051</code></li>
         </ol>
+
+        <p><strong>注意：</strong></p>
+        <ul>
+            <li><code>body</code> 参数已移除，不再参与签名计算</li>
+            <li>空字符串和 null 值不参与签名计算</li>
+            <li>参数必须按 ASCII 码升序排序</li>
+            <li><code>api_secret</code> 不参与排序，直接拼接在最后作为 <code>key=api_secret</code></li>
+        </ul>
 
         <h3>PHP示例代码</h3>
         <pre><code>function generateSign($params, $apiSecret) {
