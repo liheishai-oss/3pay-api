@@ -36,7 +36,20 @@ APP_URL=http://127.0.0.1:8787
 SERVER_IP=
 ```
 
-### 3. 数据库配置（建议配置）
+### 3. 商户对接配置
+
+```env
+# 回调IP地址（多个IP用逗号分隔，用于商户配置白名单）
+MERCHANT_CALLBACK_IPS=34.92.49.193,34.150.65.167
+
+# API网关地址
+MERCHANT_API_GATEWAY=https://api.baiyi-pay.com
+
+# API文档地址
+MERCHANT_API_DOCS=https://www.baiyi-pay.com/docs.html
+```
+
+### 4. 数据库配置（建议配置）
 
 虽然当前在 `config/database.php` 中硬编码，但建议改为使用环境变量：
 
@@ -48,7 +61,7 @@ DB_USERNAME=third_party_payment
 DB_PASSWORD=rA8f@D2kLmZx!3pQ
 ```
 
-### 4. Redis配置（建议配置）
+### 5. Redis配置（建议配置）
 
 虽然当前在 `config/redis.php` 中硬编码，但建议改为使用环境变量：
 
@@ -97,6 +110,13 @@ TELEGRAM_WEBHOOK=
 # ============================================
 APP_URL=http://127.0.0.1:8787
 SERVER_IP=
+
+# ============================================
+# 商户对接配置
+# ============================================
+MERCHANT_CALLBACK_IPS=34.92.49.193,34.150.65.167
+MERCHANT_API_GATEWAY=https://api.baiyi-pay.com
+MERCHANT_API_DOCS=https://www.baiyi-pay.com/docs.html
 
 # ============================================
 # 数据库配置（当前在config/database.php中硬编码）

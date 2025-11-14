@@ -226,6 +226,7 @@ Route::group('/api/v1/admin', function() {
         Route::add(['GET', 'OPTIONS'], '/agent-list', [app\admin\controller\v1\MerchantController::class, 'getAgentList']);
         Route::add(['POST', 'OPTIONS'], '/clear-circuit', [app\admin\controller\v1\MerchantController::class, 'clearCircuit']);
         Route::add(['GET', 'OPTIONS'], '/circuit-status/{id}', [app\admin\controller\v1\MerchantController::class, 'getCircuitStatus']);
+        Route::add(['GET', 'OPTIONS'], '/api-config', [app\admin\controller\v1\MerchantController::class, 'getApiConfig']);
     });
 
     // 订单管理路由

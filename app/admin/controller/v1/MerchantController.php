@@ -511,5 +511,19 @@ class MerchantController
             return error('获取熔断状态失败：' . $e->getMessage());
         }
     }
+
+    /**
+     * 获取商户对接配置信息
+     */
+    public function getApiConfig(Request $request)
+    {
+        $config = config('app.merchant_api', []);
+        
+        return success([
+            'callback_ips' => $config['callback_ips'] ?? '34.92.49.193,34.150.65.167',
+            'api_gateway' => $config['api_gateway'] ?? 'https://api.baiyi-pay.com',
+            'api_docs' => $config['api_docs'] ?? 'https://www.baiyi-pay.com/docs.html',
+        ]);
+    }
 }
 
