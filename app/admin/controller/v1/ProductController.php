@@ -30,20 +30,17 @@ class ProductController
         }
 
         $userData = $request->userData;
-        $isAgent = $userData['is_agent'] ?? false;
         $agentId = $userData['agent_id'] ?? null;
 
         // 构建查询
-        $query = Product::with(['agent', 'paymentType']);
+        $query = Product::with(['paymentType']);
 
-        // 代理商只能查看自己的产品
-        if ($isAgent && $agentId) {
+        // 只显示当前代理商的产品（必须有agent_id）
+        if ($agentId) {
             $query->where('agent_id', $agentId);
-        }
-
-        // 管理员可以按代理商筛选
-        if (!$isAgent && !empty($search['agent_id'])) {
-            $query->where('agent_id', $search['agent_id']);
+        } else {
+            // 如果没有agent_id，返回空结果
+            $query->whereRaw('1 = 0');
         }
 
         // 搜索条件
@@ -80,14 +77,16 @@ class ProductController
     public function detail(Request $request, int $id): Response
     {
         $userData = $request->userData;
-        $isAgent = $userData['is_agent'] ?? false;
         $agentId = $userData['agent_id'] ?? null;
 
-        $query = Product::with(['agent', 'paymentType']);
+        $query = Product::with(['paymentType']);
 
-        // 代理商只能查看自己的产品
-        if ($isAgent && $agentId) {
+        // 只显示当前代理商的产品（必须有agent_id）
+        if ($agentId) {
             $query->where('agent_id', $agentId);
+        } else {
+            // 如果没有agent_id，返回空结果
+            $query->whereRaw('1 = 0');
         }
 
         $product = $query->find($id);
