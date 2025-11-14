@@ -236,7 +236,6 @@ Route::group('/complaint', function () {
     Route::add(['GET', 'OPTIONS'], '/list', [app\admin\controller\v1\ComplaintController::class, 'list']);
     Route::add(['GET', 'OPTIONS'], '/detail', [app\admin\controller\v1\ComplaintController::class, 'detail']);
         Route::add(['GET', 'OPTIONS'], '/detail-list', [app\admin\controller\v1\ComplaintController::class, 'detailList']);
-        Route::add(['GET', 'OPTIONS'], '/query-alipay-status', [app\admin\controller\v1\ComplaintController::class, 'queryAlipayStatus']); // 投诉订单详情列表
     Route::add(['GET', 'OPTIONS'], '/subject-list', [app\admin\controller\v1\ComplaintController::class, 'subjectList']);
     Route::add(['POST', 'OPTIONS'], '/handle', [app\admin\controller\v1\ComplaintController::class, 'handle']);
 });
