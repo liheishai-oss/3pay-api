@@ -176,6 +176,15 @@ Route::group('/api/v1/admin', function() {
         Route::add(['POST', 'OPTIONS'], '/batch-bind', [app\admin\controller\v1\SubjectPaymentTypeController::class, 'batchBindPaymentTypes']);
     });
 
+    // 主体产品管理路由
+    Route::group('/subject-product', function () {
+        Route::add(['POST', 'GET', 'OPTIONS'], '/list', [app\admin\controller\v1\SubjectProductController::class, 'getSubjectProducts']);
+        Route::add(['POST', 'OPTIONS'], '/toggle', [app\admin\controller\v1\SubjectProductController::class, 'toggleProduct']);
+        Route::add(['POST', 'OPTIONS'], '/bind', [app\admin\controller\v1\SubjectProductController::class, 'bindProduct']);
+        Route::add(['POST', 'OPTIONS'], '/unbind', [app\admin\controller\v1\SubjectProductController::class, 'unbindProduct']);
+        Route::add(['POST', 'OPTIONS'], '/batch-bind', [app\admin\controller\v1\SubjectProductController::class, 'batchBindProducts']);
+    });
+
     // 文件上传路由
     Route::group('/upload', function () {
         Route::add(['POST', 'OPTIONS'], '/cert', [app\admin\controller\v1\UploadController::class, 'uploadCert']);

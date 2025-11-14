@@ -6,6 +6,7 @@ use app\model\Order;
 use app\model\Merchant;
 use app\model\Product;
 use app\model\Subject;
+use app\model\SubjectProduct;
 use app\common\constants\OrderConstants;
 use app\common\constants\CacheKeys;
 use app\common\helpers\SignatureHelper;
@@ -146,9 +147,9 @@ class OrderController
                 return $this->error('无效的API密钥或商户已被禁用');
             }
             
-            // 验证IP白名单
+            // 验证IP白名单（本地IP 127.0.0.1 跳过验证）
             $clientIp = $request->getRealIp();
-            if (!empty($merchant->ip_whitelist)) {
+            if (!empty($merchant->ip_whitelist) && $clientIp !== '127.0.0.1') {
                 $ipValidation = IpWhitelistHelper::validateIp($clientIp, $merchant->ip_whitelist);
                 if (!$ipValidation['allowed']) {
                     Log::warning('IP白名单验证失败（创建订单）', [
@@ -244,10 +245,42 @@ class OrderController
             }
             
             // 2. 查找可用主体（权限控制：只能使用自己代理商的主体）
-            // 通过支付类型绑定查找支持该支付类型的主体
-            $subject = Subject::where('agent_id', $merchant->agent_id)
+            // 方案3：同时检查产品绑定和支付类型绑定（最严格的权限控制）
+            // - 产品必须已绑定到主体（subject_product表中status=1）
+            // - 支付类型必须已绑定到主体（subject_payment_type表中status=1且is_enabled=1）
+            
+            // 先进行诊断：检查分别有多少主体满足各个条件
+            $enabledSubjects = Subject::where('agent_id', $merchant->agent_id)
+                ->where('status', Subject::STATUS_ENABLED)
+                ->count();
+            
+            $subjectsWithProduct = Subject::where('agent_id', $merchant->agent_id)
+                ->where('status', Subject::STATUS_ENABLED)
+                ->whereHas('subjectProducts', function($query) use ($product) {
+                    $query->where('product_id', $product->id)
+                          ->where('status', SubjectProduct::STATUS_ENABLED);
+                })
+                ->count();
+            
+            $subjectsWithPaymentType = Subject::where('agent_id', $merchant->agent_id)
                 ->where('status', Subject::STATUS_ENABLED)
                 ->whereHas('subjectPaymentTypes', function($query) use ($product) {
+                    $query->where('payment_type_id', $product->payment_type_id)
+                          ->where('status', 1)
+                          ->where('is_enabled', 1);
+                })
+                ->count();
+            
+            // 查找同时满足两个条件的主体
+            $subject = Subject::where('agent_id', $merchant->agent_id)
+                ->where('status', Subject::STATUS_ENABLED)
+                ->whereHas('subjectProducts', function($query) use ($product) {
+                    // 检查产品绑定：产品必须已绑定且启用
+                    $query->where('product_id', $product->id)
+                          ->where('status', SubjectProduct::STATUS_ENABLED);
+                })
+                ->whereHas('subjectPaymentTypes', function($query) use ($product) {
+                    // 检查支付类型绑定：支付类型必须已绑定且启用
                     $query->where('payment_type_id', $product->payment_type_id)
                           ->where('status', 1)
                           ->where('is_enabled', 1);
@@ -267,11 +300,19 @@ class OrderController
                     '节点4-支付主体选择',
                     [
                         'agent_id' => $merchant->agent_id,
+                        'product_id' => $product->id,
+                        'product_code' => $product->product_code,
                         'payment_type_id' => $product->payment_type_id,
                         'available_subjects' => 0,
                         'selected_subject_id' => null,
                         'selection_result' => '失败',
-                        'failure_reason' => '无可用支付主体'
+                        'failure_reason' => '无可用支付主体（需要同时满足产品绑定和支付类型绑定）',
+                        'diagnosis' => [
+                            'enabled_subjects_count' => $enabledSubjects,
+                            'subjects_with_product_binding' => $subjectsWithProduct,
+                            'subjects_with_payment_type_binding' => $subjectsWithPaymentType,
+                            'subjects_with_both_bindings' => 0
+                        ]
                     ],
                     $request->getRealIp(),
                     $request->header('user-agent', '')
@@ -288,12 +329,33 @@ class OrderController
                     'P1'
                 );
                 
+                // 生成更详细的错误信息
+                $errorMessage = '暂无可用支付主体。';
+                if ($enabledSubjects == 0) {
+                    $errorMessage .= '该代理商下没有启用的主体。';
+                } else if ($subjectsWithProduct == 0) {
+                    $errorMessage .= "产品代码 {$product->product_code} 未绑定到任何主体，请先在产品管理页面绑定该产品到主体。";
+                } else if ($subjectsWithPaymentType == 0) {
+                    $errorMessage .= "支付类型未绑定到任何主体，请先在主体管理页面绑定支付类型。";
+                } else {
+                    $errorMessage .= "虽然分别有 {$subjectsWithProduct} 个主体绑定了产品，{$subjectsWithPaymentType} 个主体绑定了支付类型，但没有主体同时满足两个条件。";
+                }
+                
                 Log::warning('支付主体查找失败', [
                     'agent_id' => $merchant->agent_id,
+                    'product_id' => $product->id,
+                    'product_code' => $product->product_code,
                     'payment_type_id' => $product->payment_type_id,
-                    'merchant_id' => $merchant->id
+                    'merchant_id' => $merchant->id,
+                    'failure_reason' => '需要同时满足：1.产品已绑定到主体且启用，2.支付类型已绑定到主体且启用',
+                    'diagnosis' => [
+                        'enabled_subjects_count' => $enabledSubjects,
+                        'subjects_with_product_binding' => $subjectsWithProduct,
+                        'subjects_with_payment_type_binding' => $subjectsWithPaymentType
+                    ]
                 ]);
-                return $this->error('暂无可用支付主体，请检查主体配置');
+                
+                return $this->error($errorMessage);
             }
             
             // 节点4：支付主体选择（成功）
@@ -306,14 +368,18 @@ class OrderController
                 '节点4-支付主体选择',
                 [
                     'agent_id' => $merchant->agent_id,
+                    'product_id' => $product->id,
+                    'product_code' => $product->product_code,
                     'product_type' => $product->paymentType->product_code ?? '',
+                    'payment_type_id' => $product->payment_type_id,
                     'available_subjects' => 1,
                     'selected_subject_id' => $subject->id,
                     'subject_info' => [
                         'company_name' => $subject->company_name,
                         'alipay_app_id' => $subject->alipay_app_id ?? ''
                     ],
-                    'selection_result' => '成功'
+                    'selection_result' => '成功',
+                    'check_conditions' => '同时满足产品绑定和支付类型绑定'
                 ],
                 $request->getRealIp(),
                 $request->header('user-agent', '')
@@ -683,9 +749,9 @@ class OrderController
                 return $this->error('无效的API密钥或商户已被禁用');
             }
             
-            // 验证IP白名单
+            // 验证IP白名单（本地IP 127.0.0.1 跳过验证）
             $clientIp = $request->getRealIp();
-            if (!empty($merchant->ip_whitelist)) {
+            if (!empty($merchant->ip_whitelist) && $clientIp !== '127.0.0.1') {
                 $ipValidation = IpWhitelistHelper::validateIp($clientIp, $merchant->ip_whitelist);
                 if (!$ipValidation['allowed']) {
                     Log::warning('IP白名单验证失败（查询订单）', [
@@ -815,9 +881,9 @@ class OrderController
                 return $this->error('无效的API密钥或商户已被禁用');
             }
             
-            // 验证IP白名单
+            // 验证IP白名单（本地IP 127.0.0.1 跳过验证）
             $clientIp = $request->getRealIp();
-            if (!empty($merchant->ip_whitelist)) {
+            if (!empty($merchant->ip_whitelist) && $clientIp !== '127.0.0.1') {
                 $ipValidation = IpWhitelistHelper::validateIp($clientIp, $merchant->ip_whitelist);
                 if (!$ipValidation['allowed']) {
                     Log::warning('IP白名单验证失败（关闭订单）', [
