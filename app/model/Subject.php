@@ -154,6 +154,13 @@ class Subject extends Model
         return $this->hasMany(SubjectPaymentType::class, 'subject_id', 'id');
     }
 
+    /**
+     * 关联主体产品关联表
+     */
+    public function subjectProducts()
+    {
+        return $this->hasMany(SubjectProduct::class, 'subject_id', 'id');
+    }
 
     /**
      * 获取启用的主体
