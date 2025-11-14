@@ -52,9 +52,9 @@ class PaymentQueryController
                 return $this->error('无效的API密钥或商户已被禁用');
             }
 
-            // 验证IP白名单
+            // 验证IP白名单（本地IP 127.0.0.1 跳过验证）
             $clientIp = $request->getRealIp();
-            if (!empty($merchant->ip_whitelist)) {
+            if (!empty($merchant->ip_whitelist) && $clientIp !== '127.0.0.1') {
                 $ipValidation = IpWhitelistHelper::validateIp($clientIp, $merchant->ip_whitelist);
                 if (!$ipValidation['allowed']) {
                     Log::warning('IP白名单验证失败（支付查询）', [
