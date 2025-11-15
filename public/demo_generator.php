@@ -7,9 +7,13 @@
 // 引入PaymentDemo类
 require_once __DIR__ . '/../../demo/php/payment_demo.php';
 
-// 配置API密钥
-$apiKey = 'f227cf12fc2450fb8d6ced8c49d7f0d2';
-$apiSecret = 'c8fe2a77ff57f5d9ef9cb615b6d55fb1';
+// 配置API密钥 - 默认值，用户可以在表单中自定义
+$defaultApiKey = '5e38a3bfee6b755adf13d95d99b345e5';
+$defaultApiSecret = '985e44395d1022a2da8e924d05c1e518571296a1302f5d2ebe76febc73b63d11';
+
+// 从表单获取或使用默认值
+$apiKey = $_POST['api_key'] ?? $_GET['api_key'] ?? $defaultApiKey;
+$apiSecret = $_POST['api_secret'] ?? $_GET['api_secret'] ?? $defaultApiSecret;
 $baseUrl = 'http://127.0.0.1:8787';
 
 // 处理表单提交
@@ -18,7 +22,10 @@ $error = null;
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     try {
-        $demo = new PaymentDemo($apiKey, $apiSecret, $baseUrl);
+        // 从POST请求中获取API密钥（如果用户提交了自定义值）
+        $postApiKey = $_POST['api_key'] ?? $apiKey;
+        $postApiSecret = $_POST['api_secret'] ?? $apiSecret;
+        $demo = new PaymentDemo($postApiKey, $postApiSecret, $baseUrl);
         
         if ($_POST['action'] === 'create_order') {
             // 创建订单
@@ -423,12 +430,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         </div>
         
         <div class="content">
+            <!-- 配置商户Key和密钥 -->
+            <div class="card" style="grid-column: 1 / -1; margin-bottom: 20px;">
+                <div class="card-title">🔑 商户配置</div>
+                
+                <form method="GET" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                    <div class="form-group">
+                        <label>商户Key</label>
+                        <input type="text" name="api_key" value="<?= htmlspecialchars($apiKey) ?>" placeholder="<?= htmlspecialchars($defaultApiKey) ?>">
+                        <small>默认: <?= htmlspecialchars($defaultApiKey) ?></small>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>商户密钥</label>
+                        <input type="text" name="api_secret" value="<?= htmlspecialchars($apiSecret) ?>" placeholder="<?= htmlspecialchars($defaultApiSecret) ?>">
+                        <small>默认: <?= substr($defaultApiSecret, 0, 16) ?>...***</small>
+                    </div>
+                    
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <button type="submit" class="btn">🔧 更新配置</button>
+                        <button type="button" class="btn" onclick="resetConfig()" style="margin-left: 10px;">🔄 重置为默认</button>
+                    </div>
+                </form>
+            </div>
+            
             <!-- 创建订单 -->
             <div class="card">
                 <div class="card-title">📝 创建订单</div>
                 
                 <form method="POST">
                     <input type="hidden" name="action" value="create_order">
+                    <input type="hidden" name="api_key" value="<?= htmlspecialchars($apiKey) ?>">
+                    <input type="hidden" name="api_secret" value="<?= htmlspecialchars($apiSecret) ?>">
                     
                     <div class="form-group">
                         <label>商户订单号</label>
@@ -438,11 +471,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     
                     <div class="form-group">
                         <label>产品代码</label>
-                        <select name="product_code" required>
-                            <option value="9469">9469 - 支付宝WAP支付</option>
-                            <option value="9470">9470 - 支付宝扫码支付</option>
-                            <option value="9471">9471 - 支付宝条码支付</option>
-                        </select>
+                        <input type="text" name="product_code" value="9469" placeholder="请输入产品代码" required>
+                        <small>常用代码：9469(支付宝WAP支付)、9470(支付宝扫码支付)、9471(支付宝条码支付)、2215(当面付)</small>
                     </div>
                     
                     <div class="form-group">
@@ -489,6 +519,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 
                 <form method="POST">
                     <input type="hidden" name="action" value="query_order">
+                    <input type="hidden" name="api_key" value="<?= htmlspecialchars($apiKey) ?>">
+                    <input type="hidden" name="api_secret" value="<?= htmlspecialchars($apiSecret) ?>">
                     
                     <div class="form-group">
                         <label>商户订单号</label>
@@ -504,6 +536,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                 
                 <form method="POST">
                     <input type="hidden" name="action" value="close_order">
+                    <input type="hidden" name="api_key" value="<?= htmlspecialchars($apiKey) ?>">
+                    <input type="hidden" name="api_secret" value="<?= htmlspecialchars($apiSecret) ?>">
                     
                     <div class="form-group">
                         <label>商户订单号</label>
@@ -566,6 +600,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             document.querySelector('input[name="amount"]').value = amount;
             document.querySelector('input[name="subject"]').value = '快速测试商品-' + amount + '元';
             alert('✅ 已自动填充测试数据，金额: ¥' + amount);
+        }
+        
+        // 重置配置为默认值
+        function resetConfig() {
+            document.querySelector('input[name="api_key"]').value = '<?= htmlspecialchars($defaultApiKey) ?>';
+            document.querySelector('input[name="api_secret"]').value = '<?= htmlspecialchars($defaultApiSecret) ?>';
+            alert('✅ 已重置为默认配置');
         }
         
         // 自动滚动到结果区域
