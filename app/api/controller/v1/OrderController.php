@@ -326,6 +326,7 @@ class OrderController
                     $params['merchant_order_no'],
                     $merchant->agent_id,
                     $product->payment_type_id,
+                    $product->product_code,
                     'P1'
                 );
                 
