@@ -72,18 +72,6 @@ class PaymentFactory
                 throw new Exception("暂无可用支付主体");
             }
             
-            // 验证选择的支付主体必须是启用状态（双重检查，确保安全）
-            if ($subject->status !== Subject::STATUS_ENABLED) {
-                Log::error('选择的支付主体未启用', [
-                    'subject_id' => $subject->id,
-                    'subject_status' => $subject->status,
-                    'expected_status' => Subject::STATUS_ENABLED,
-                    'agent_id' => $agentId,
-                    'product_code' => $productCode
-                ]);
-                throw new Exception("选择的支付主体未启用，无法创建支付");
-            }
-
             // 4. 获取支付配置
             $paymentConfig = self::getPaymentConfig($subject, $paymentType);
 
@@ -114,8 +102,9 @@ class PaymentFactory
             return null;
         }
         
-        return Subject::where('agent_id', $agentId)
-            ->where('status', Subject::STATUS_ENABLED)
+        // 明确过滤：只查询启用状态的主体（status=1），排除关闭状态（status=0）
+        $subject = Subject::where('agent_id', $agentId)
+            ->where('status', 1)  // 明确使用 1 表示启用状态
             ->whereHas('subjectPaymentTypes', function($query) use ($product) {
                 $query->where('payment_type_id', $product->payment_type_id)
                       ->where('status', 1)
@@ -123,6 +112,20 @@ class PaymentFactory
             })
             ->inRandomOrder()
             ->first();
+        
+        // 双重验证：确保查询到的主体确实是启用状态
+        if ($subject && $subject->status !== 1) {
+            Log::warning('查询到的主体状态不正确', [
+                'subject_id' => $subject->id,
+                'subject_status' => $subject->status,
+                'expected_status' => 1,
+                'product_id' => $productId,
+                'agent_id' => $agentId
+            ]);
+            return null;
+        }
+        
+        return $subject;
     }
 
     /**
