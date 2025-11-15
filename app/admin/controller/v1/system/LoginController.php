@@ -26,6 +26,14 @@
                 $data = $this->loginService->login($param);
                 // 从返回的数据中提取 token 设置到响应头
                 $token = $data['Authorization'] ?? null;
+                
+                // 调试日志：检查返回的数据
+                \support\Log::info('登录接口返回数据', [
+                    'data' => $data,
+                    'token' => $token,
+                    'has_authorization' => isset($data['Authorization'])
+                ]);
+                
                 $headers = $token ? ['Authorization' => $token] : [];
                 return success($data, '登录成功',200,$headers);
             } catch (Throwable $e) {
