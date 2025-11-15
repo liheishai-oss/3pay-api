@@ -61,20 +61,25 @@ class DemoGeneratorController
                     if ($response['success']) {
                         $result = $response['data'];
                         
-                        // 如果支付链接不是完整URL，补充完整
-                        if (isset($result['data']['payment_url'])) {
-                            $paymentUrl = $result['data']['payment_url'];
-                            if (!preg_match('/^https?:\/\//', $paymentUrl)) {
-                                $result['data']['payment_url_full'] = $baseUrl . '/' . ltrim($paymentUrl, '/');
-                            } else {
-                                $result['data']['payment_url_full'] = $paymentUrl;
+                        // 检查是否是API密钥错误
+                        if (isset($result['msg']) && strpos($result['msg'], '无效的API密钥') !== false) {
+                            $error = '无效的API密钥或商户已被禁用。请确保：<br>1. API Key 在系统中存在<br>2. 对应的商户状态为启用<br>3. API Secret 正确';
+                        } else {
+                            // 如果支付链接不是完整URL，补充完整
+                            if (isset($result['data']['payment_url'])) {
+                                $paymentUrl = $result['data']['payment_url'];
+                                if (!preg_match('/^https?:\/\//', $paymentUrl)) {
+                                    $result['data']['payment_url_full'] = $baseUrl . '/' . ltrim($paymentUrl, '/');
+                                } else {
+                                    $result['data']['payment_url_full'] = $paymentUrl;
+                                }
                             }
+                            
+                            // 不再在此处生成当面付二维码，所有支付方式统一展示支付页面URL二维码
+                            
+                            // 保存产品代码，用于区分支付方式
+                            $result['product_code'] = $request->post('product_code');
                         }
-                        
-                        // 不再在此处生成当面付二维码，所有支付方式统一展示支付页面URL二维码
-                        
-                        // 保存产品代码，用于区分支付方式
-                        $result['product_code'] = $request->post('product_code');
                     } else {
                         $error = $response['error'] ?? '请求失败';
                     }
@@ -88,22 +93,12 @@ class DemoGeneratorController
                         $response = $demo->queryOrder($merchantOrderNo);
                         if ($response['success']) {
                             $result = $response['data'];
+                            // 检查是否是API密钥错误
+                            if (isset($result['msg']) && strpos($result['msg'], '无效的API密钥') !== false) {
+                                $error = '无效的API密钥或商户已被禁用。请确保：<br>1. API Key 在系统中存在<br>2. 对应的商户状态为启用<br>3. API Secret 正确';
+                            }
                         } else {
                             $error = $response['error'] ?? '查询失败';
-                        }
-                    }
-                    
-                } elseif ($action === 'close_order') {
-                    // 关闭订单
-                    $merchantOrderNo = $request->post('close_order_no', '');
-                    if (empty($merchantOrderNo)) {
-                        $error = '请输入订单号';
-                    } else {
-                        $response = $demo->closeOrder($merchantOrderNo);
-                        if ($response['success']) {
-                            $result = $response['data'];
-                        } else {
-                            $error = $response['error'] ?? '关闭失败';
                         }
                     }
                 }
@@ -449,8 +444,19 @@ class DemoGeneratorController
         <?php if ($error): ?>
         <div class="result-card">
             <div class="alert alert-error">
-                ❌ 错误: <?= htmlspecialchars($error) ?>
+                ❌ 错误: <?= $error ?>
             </div>
+            <?php if (strpos($error, '无效的API密钥') !== false): ?>
+            <div style="background: #fff7e6; border: 1px solid #ffd591; border-radius: 6px; padding: 15px; margin-top: 15px; font-size: 13px; line-height: 1.8;">
+                <strong>💡 提示：</strong>
+                <ul style="margin: 10px 0 0 20px;">
+                    <li>请检查输入的 API Key 是否在系统中存在</li>
+                    <li>确认对应的商户状态为"启用"</li>
+                    <li>验证 API Secret 是否正确</li>
+                    <li>如果使用自定义配置，请确保该商户已在后台管理系统中创建并启用</li>
+                </ul>
+            </div>
+            <?php endif; ?>
         </div>
         <?php endif; ?>
         
@@ -544,7 +550,7 @@ class DemoGeneratorController
                 </div>
             </div>
             
-            <!-- 查询和关闭订单 -->
+            <!-- 查询订单 -->
             <div class="card">
                 <div class="card-title">🔍 查询订单</div>
                 
@@ -563,23 +569,6 @@ class DemoGeneratorController
                 
                 <hr style="margin: 25px 0; border: none; border-top: 1px solid #e0e0e0;">
                 
-                <div class="card-title" style="margin-top: 25px;">🚫 关闭订单</div>
-                
-                <form method="POST">
-                    <input type="hidden" name="action" value="close_order">
-                    <input type="hidden" name="api_key" value="<?= htmlspecialchars($apiKey) ?>">
-                    <input type="hidden" name="api_secret" value="<?= htmlspecialchars($apiSecret) ?>">
-                    
-                    <div class="form-group">
-                        <label>商户订单号</label>
-                        <input type="text" name="close_order_no" placeholder="输入要关闭的订单号" required>
-                    </div>
-                    
-                    <button type="submit" class="btn btn-danger btn-block">🚫 关闭订单</button>
-                </form>
-                
-                <hr style="margin: 25px 0; border: none; border-top: 1px solid #e0e0e0;">
-                
                 <div class="card-title" style="margin-top: 25px;">📚 使用说明</div>
                 
                 <div style="font-size: 13px; line-height: 1.8; color: #666;">
@@ -591,15 +580,9 @@ class DemoGeneratorController
                     </ul>
                     
                     <p><strong>2. 查询订单:</strong></p>
-                    <ul style="margin-left: 20px; margin-bottom: 10px;">
-                        <li>输入商户订单号</li>
-                        <li>查看订单状态和支付信息</li>
-                    </ul>
-                    
-                    <p><strong>3. 关闭订单:</strong></p>
                     <ul style="margin-left: 20px;">
                         <li>输入商户订单号</li>
-                        <li>关闭未支付的订单</li>
+                        <li>查看订单状态和支付信息</li>
                     </ul>
                 </div>
             </div>
