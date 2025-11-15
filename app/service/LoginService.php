@@ -25,6 +25,7 @@ class LoginService
         $clientIp = '0.0.0.0';
         $remoteIp = '0.0.0.0';
         $host = '';
+        $hostWithPort = '';
         if ($request) {
             // 获取真实IP（可能经过代理）
             $clientIp = $request->getRealIp();
@@ -32,14 +33,25 @@ class LoginService
             $remoteIp = $request->getRemoteIp();
             // 获取域名（不包含端口）
             $host = $request->host(true) ?? '';
+            // 获取域名（包含端口，用于更全面的检测）
+            $hostWithPort = $request->host(false) ?? '';
+            // 从header中获取host（备用方案）
+            if (empty($host)) {
+                $host = $request->header('host') ?? '';
+                // 去除端口号
+                if ($host && preg_match('/^([^:]+)/', $host, $matches)) {
+                    $host = $matches[1];
+                }
+            }
         }
 
         // 判断是否为商户（商户管理组 group_id = 4）
         $isMerchant = $admin->group_id == 4;
         // 判断是否为本地IP（支持多种格式：127.0.0.1, ::1, localhost, 0.0.0.0）
         $isLocalIp = $this->isLocalIp($clientIp) || $this->isLocalIp($remoteIp);
-        // 判断域名是否包含localhost
-        $isLocalhostDomain = !empty($host) && stripos($host, 'localhost') !== false;
+        // 判断域名是否包含localhost（检查多个来源）
+        $isLocalhostDomain = (!empty($host) && stripos($host, 'localhost') !== false) 
+                          || (!empty($hostWithPort) && stripos($hostWithPort, 'localhost') !== false);
 
         // 商户、本地IP或localhost域名跳过谷歌验证码检查
         $isLocalhost = $isLocalIp || $isLocalhostDomain;
@@ -50,6 +62,8 @@ class LoginService
             'client_ip' => $clientIp,
             'remote_ip' => $remoteIp,
             'host' => $host,
+            'host_with_port' => $hostWithPort,
+            'header_host' => $request ? ($request->header('host') ?? '') : '',
             'is_merchant' => $isMerchant,
             'is_local_ip' => $isLocalIp,
             'is_localhost_domain' => $isLocalhostDomain,
@@ -79,6 +93,16 @@ class LoginService
                 
                 // 已绑定，验证谷歌验证码
                 if (empty($param['google_code'])) {
+                    // 记录详细信息用于调试
+                    Log::warning('需要谷歌验证码', [
+                        'username' => $admin->username,
+                        'client_ip' => $clientIp,
+                        'remote_ip' => $remoteIp,
+                        'host' => $host,
+                        'is_merchant' => $isMerchant,
+                        'is_localhost' => $isLocalhost,
+                        'has_google_code' => !empty($param['google_code'])
+                    ]);
                     throw new MyBusinessException('请输入谷歌验证码');
                 }
                 
@@ -86,6 +110,15 @@ class LoginService
                     throw new MyBusinessException('谷歌验证码错误');
                 }
             }
+        } else {
+            // 记录跳过验证的信息
+            Log::info('跳过谷歌验证码', [
+                'username' => $admin->username,
+                'reason' => $isMerchant ? '商户' : '本地访问',
+                'client_ip' => $clientIp,
+                'remote_ip' => $remoteIp,
+                'host' => $host
+            ]);
         }
 
         // 检查是否首次登录（商户必须修改密码）
