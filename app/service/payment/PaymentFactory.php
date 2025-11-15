@@ -85,6 +85,19 @@ class PaymentFactory
             
             // 4. 获取支付配置
             $paymentConfig = self::getPaymentConfig($subject, $paymentType);
+            
+            // 打印传递给支付宝的回调地址
+            $notifyUrl = $paymentConfig['notify_url'] ?? '未配置';
+            echo "\n" . str_repeat("-", 80) . "\n";
+            echo "【创建支付】订单号: " . ($orderInfo['platform_order_no'] ?? '未知') . "\n";
+            echo "【回调地址】传递给支付宝的 notify_url: {$notifyUrl}\n";
+            echo str_repeat("-", 80) . "\n";
+            Log::info("创建支付回调地址", [
+                'order_number' => $orderInfo['platform_order_no'] ?? '',
+                'notify_url' => $notifyUrl,
+                'subject_id' => $subject->id,
+                'alipay_app_id' => $subject->alipay_app_id ?? '未配置'
+            ]);
 
             // 5. 根据支付类型调用相应的支付方法
             return self::callPaymentMethod($paymentType, $orderInfo, $paymentConfig);

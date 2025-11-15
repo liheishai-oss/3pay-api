@@ -21,12 +21,25 @@ class PaymentNotifyController
      */
     public function alipay(Request $request)
     {
+        $startTime = microtime(true);
+        echo "\n" . str_repeat("=", 80) . "\n";
+        echo "【支付宝回调处理开始】" . date('Y-m-d H:i:s') . "\n";
+        echo str_repeat("=", 80) . "\n";
+        
         try {
             $params = $request->post();
+            echo "【步骤1】接收回调参数\n";
+            echo "  - 请求IP: " . $request->getRealIp() . "\n";
+            echo "  - 参数数量: " . count($params) . "\n";
+            echo "  - 订单号: " . ($params['out_trade_no'] ?? '未提供') . "\n";
+            echo "  - 支付宝交易号: " . ($params['trade_no'] ?? '未提供') . "\n";
+            echo "  - 交易状态: " . ($params['trade_status'] ?? '未提供') . "\n";
+            
             // 测试快速模拟开关：模拟支付宝回调，无需真实验签（仅用于联调/测试）
             // 使用方式：POST /api/v1/payment/notify/alipay  body: simulate=1&out_trade_no=平台订单号
             // debug=1 或 simulate=1 时，跳过渠道验签，直接走后续流程（仅测试联调使用）
             if ((!empty($params['simulate']) && $params['simulate'] == '1') || (!empty($params['debug']) && $params['debug'] == '1')) {
+                echo "【步骤2】模拟回调模式（跳过验签）\n";
                 $outTradeNo = $params['out_trade_no'] ?? '';
                 if (empty($outTradeNo)) {
                     Log::warning('模拟回调缺少订单号');
@@ -37,6 +50,10 @@ class PaymentNotifyController
                     Log::warning('模拟回调订单不存在', ['order_no' => $outTradeNo]);
                     return 'fail';
                 }
+                echo "  - 订单ID: {$order->id}\n";
+                echo "  - 订单状态: {$order->pay_status}\n";
+                echo "  - 订单金额: {$order->order_amount}\n";
+                
                 \app\service\OrderLogService::log(
                     $order->trace_id ?? '',
                     $order->platform_order_no,
@@ -46,15 +63,21 @@ class PaymentNotifyController
                     $request->getRealIp(), $request->header('user-agent', '')
                 );
                 // 直接更新订单并触发商户回调
+                echo "【步骤3】更新订单状态（模拟模式）\n";
                 $this->updateOrderStatus($order, [
                     'trade_no' => $params['trade_no'] ?? ('SIM'.date('His')),
                     'buyer_id' => $params['buyer_id'] ?? '',
                     'buyer_logon_id' => $params['buyer_logon_id'] ?? '',
                     'receipt_amount' => $params['receipt_amount'] ?? $order->order_amount,
                 ], $request->getRealIp(), $request->header('user-agent', ''));
+                
+                $duration = round((microtime(true) - $startTime) * 1000, 2);
+                echo "【完成】模拟回调处理成功，耗时: {$duration}ms\n";
+                echo str_repeat("=", 80) . "\n\n";
                 return 'success';
             }
             
+            echo "【步骤2】正常回调模式\n";
             Log::info('收到支付宝支付通知', [
                 'params' => $params,
                 'ip' => $request->getRealIp()
@@ -62,6 +85,7 @@ class PaymentNotifyController
 
             // 验证必要参数
             if (empty($params['out_trade_no'])) {
+                echo "【错误】缺少订单号参数\n";
                 \app\service\OrderLogService::log(
                     $params['trace_id'] ?? '',
                     $params['out_trade_no'] ?? '',
@@ -71,12 +95,15 @@ class PaymentNotifyController
                     $request->getRealIp(), $request->header('user-agent', '')
                 );
                 Log::warning('支付宝通知缺少订单号');
+                echo str_repeat("=", 80) . "\n\n";
                 return 'fail';
             }
 
             // 获取订单信息
+            echo "【步骤3】查询订单信息\n";
             $order = Order::where('platform_order_no', $params['out_trade_no'])->first();
             if (!$order) {
+                echo "  - 订单不存在: {$params['out_trade_no']}\n";
                 \app\service\OrderLogService::log(
                     $params['trace_id'] ?? '',
                     $params['out_trade_no'] ?? '', '',
@@ -85,12 +112,20 @@ class PaymentNotifyController
                     $request->getRealIp(), $request->header('user-agent', '')
                 );
                 Log::warning('订单不存在', ['order_no' => $params['out_trade_no']]);
+                echo str_repeat("=", 80) . "\n\n";
                 return 'fail';
             }
             
+            echo "  - 订单ID: {$order->id}\n";
+            echo "  - 订单状态: {$order->pay_status}\n";
+            echo "  - 订单金额: {$order->order_amount}\n";
+            echo "  - 过期时间: " . ($order->expire_time ?? '未设置') . "\n";
+            
             // 检查订单是否过期（防止过期订单的支付回调被处理）
+            echo "【步骤4】检查订单是否过期\n";
             $isExpired = $order->expire_time && strtotime($order->expire_time) < time();
             if ($isExpired && ($order->pay_status == Order::PAY_STATUS_CREATED || $order->pay_status == Order::PAY_STATUS_OPENED)) {
+                echo "  - 订单已过期，拒绝处理\n";
                 \app\service\OrderLogService::log(
                     $order->trace_id ?? '',
                     $order->platform_order_no,
@@ -119,17 +154,25 @@ class PaymentNotifyController
                     $order->save();
                 }
                 
+                echo str_repeat("=", 80) . "\n\n";
                 return 'fail'; // 返回fail，让支付宝知道我们拒绝了这次回调
             }
+            echo "  - 订单未过期，继续处理\n";
 
             // 获取产品信息
+            echo "【步骤5】获取产品信息\n";
             $product = Product::find($order->product_id);
             if (!$product) {
+                echo "  - 产品不存在: {$order->product_id}\n";
                 Log::warning('产品不存在', ['product_id' => $order->product_id]);
+                echo str_repeat("=", 80) . "\n\n";
                 return 'fail';
             }
+            echo "  - 产品ID: {$product->id}\n";
+            echo "  - 产品代码: {$product->product_code}\n";
 
             // 通过支付工厂处理通知
+            echo "【步骤6】验证签名和处理通知\n";
             $result = PaymentFactory::handlePaymentNotify(
                 $product->product_code,
                 $params,
@@ -137,6 +180,8 @@ class PaymentNotifyController
             );
 
             if ($result['success']) {
+                echo "  - 签名验证成功\n";
+                echo "  - 通知处理成功\n";
                 \app\service\OrderLogService::log(
                     $order->trace_id ?? '',
                     $order->platform_order_no,
@@ -146,13 +191,20 @@ class PaymentNotifyController
                     $request->getRealIp(), $request->header('user-agent', '')
                 );
                 // 更新订单状态（记录支付IP，从回调请求IP获取）
+                echo "【步骤7】更新订单状态\n";
                 $this->updateOrderStatus($order, $params, $request->getRealIp(), $request->header('user-agent', ''));
                 Log::info('支付通知处理成功', [
                     'order_no' => $params['out_trade_no'],
                     'trade_no' => $params['trade_no'] ?? ''
                 ]);
+                
+                $duration = round((microtime(true) - $startTime) * 1000, 2);
+                echo "【完成】支付回调处理成功，耗时: {$duration}ms\n";
+                echo str_repeat("=", 80) . "\n\n";
                 return 'success';
             } else {
+                echo "  - 签名验证失败或处理失败\n";
+                echo "  - 错误信息: " . ($result['message'] ?? '未知错误') . "\n";
                 \app\service\OrderLogService::log(
                     $order->trace_id ?? '',
                     $order->platform_order_no,
@@ -165,14 +217,23 @@ class PaymentNotifyController
                     'order_no' => $params['out_trade_no'],
                     'message' => $result['message'] ?? ''
                 ]);
+                $duration = round((microtime(true) - $startTime) * 1000, 2);
+                echo "【失败】支付回调处理失败，耗时: {$duration}ms\n";
+                echo str_repeat("=", 80) . "\n\n";
                 return 'fail';
             }
 
         } catch (\Exception $e) {
+            echo "【异常】支付回调处理异常\n";
+            echo "  - 错误信息: " . $e->getMessage() . "\n";
+            echo "  - 错误位置: " . $e->getFile() . ":" . $e->getLine() . "\n";
             Log::error('支付通知处理异常', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
+            $duration = round((microtime(true) - $startTime) * 1000, 2);
+            echo "【异常】处理耗时: {$duration}ms\n";
+            echo str_repeat("=", 80) . "\n\n";
             return 'fail';
         }
     }
@@ -187,9 +248,11 @@ class PaymentNotifyController
     private function updateOrderStatus(Order $order, array $notifyParams, $payIp = '', $userAgent = '')
     {
         try {
+            echo "  【7.1】开始事务\n";
             Db::beginTransaction();
 
             // 更新订单状态
+            echo "  【7.2】准备更新订单数据\n";
             $updateData = [
                 'pay_status' => Order::PAY_STATUS_PAID,
                 // 支付确认后仅标记待通知，实际通知成功后再置成功
@@ -224,14 +287,27 @@ class PaymentNotifyController
             }
             
             $order->update($updateData);
+            echo "  【7.3】订单状态已更新\n";
+            echo "    - 支付状态: 已支付\n";
+            echo "    - 支付宝交易号: " . ($updateData['alipay_order_no'] ?? '') . "\n";
+            echo "    - 支付时间: " . ($updateData['pay_time'] ?? '') . "\n";
+            echo "    - 支付IP: " . ($payIp ?: '未记录') . "\n";
 
             // 发送商户通知（成功后回写 SUCCESS），自动回调不绕过熔断
-            \app\service\MerchantNotifyService::send($order, $notifyParams, ['manual' => false]);
+            echo "  【7.4】发送商户通知\n";
+            $notifyResult = \app\service\MerchantNotifyService::send($order, $notifyParams, ['manual' => false]);
+            if ($notifyResult['success']) {
+                echo "    - 商户通知发送成功\n";
+            } else {
+                echo "    - 商户通知发送失败: " . ($notifyResult['message'] ?? '未知错误') . "\n";
+            }
 
+            echo "  【7.5】提交事务\n";
             Db::commit();
 
             // 订单支付成功后，将订单加入分账队列（秒级异步处理，不阻塞回调响应）
             try {
+                echo "  【7.6】加入分账队列\n";
                 // 刷新订单数据以获取最新状态
                 $order->refresh();
                 
@@ -245,6 +321,7 @@ class PaymentNotifyController
                 ]);
                 
                 \support\Redis::lpush($queueKey, $queueData);
+                echo "    - 订单已加入分账队列\n";
                 
                 // 记录分账队列日志
                 \app\service\OrderLogService::log(
@@ -272,6 +349,7 @@ class PaymentNotifyController
                 ]);
             } catch (\Exception $e) {
                 // 入队失败不影响支付回调结果，只记录日志
+                echo "    - 加入分账队列失败: " . $e->getMessage() . "\n";
                 Log::warning('支付回调后加入分账队列失败', [
                     'order_id' => $order->id,
                     'platform_order_no' => $order->platform_order_no,
@@ -280,6 +358,8 @@ class PaymentNotifyController
             }
 
         } catch (\Exception $e) {
+            echo "  【错误】更新订单状态失败\n";
+            echo "    - 错误信息: " . $e->getMessage() . "\n";
             Db::rollBack();
             Log::error('更新订单状态失败', [
                 'order_id' => $order->id,
