@@ -22,9 +22,12 @@
                 // 参数校验
                 $this->validator->validate($param);
 
-                // 调用服务类，传递Request对象以获取客户端IP
-                $data = $this->loginService->login($param, $request);
-                return success($data, '登录成功',200,$data);
+                // 调用服务类
+                $data = $this->loginService->login($param);
+                // 从返回的数据中提取 token 设置到响应头
+                $token = $data['Authorization'] ?? null;
+                $headers = $token ? ['Authorization' => $token] : [];
+                return success($data, '登录成功',200,$headers);
             } catch (Throwable $e) {
                 return error($e->getMessage(), (int)($e->getCode() ?: 400));
             }
