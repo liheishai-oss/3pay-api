@@ -68,6 +68,7 @@ class OrderAlertService
      * @param string $merchantOrderNo 商户订单号
      * @param int $agentId 代理商ID
      * @param int $paymentTypeId 支付类型ID
+     * @param string $productCode 产品编号
      * @param string $level 预警级别
      */
     public function sendSubjectSelectionFailedAlert(
@@ -76,6 +77,7 @@ class OrderAlertService
         string $merchantOrderNo,
         int $agentId,
         int $paymentTypeId,
+        string $productCode,
         string $level = 'P1'
     ): void {
         $alertKey = $this->getAlertKey('subject_selection_failed', $platformOrderNo);
@@ -90,6 +92,7 @@ class OrderAlertService
             $merchantOrderNo,
             $agentId,
             $paymentTypeId,
+            $productCode,
             $level
         );
         
@@ -208,6 +211,7 @@ class OrderAlertService
         string $merchantOrderNo,
         int $agentId,
         int $paymentTypeId,
+        string $productCode,
         string $level
     ): string {
         $time = date('Y-m-d H:i:s');
@@ -218,12 +222,15 @@ class OrderAlertService
         $message .= "🔍 TraceId：<code>{$traceId}</code>\n";
         $message .= "📦 订单号：<code>{$platformOrderNo}</code>\n";
         $message .= "🏪 商户订单号：<code>{$merchantOrderNo}</code>\n";
-        $message .= "💳 支付类型ID：{$paymentTypeId}\n\n";
+        $message .= "🏷️ 产品编号：<code>{$productCode}</code>\n";
+        $message .= "💳 支付类型ID：{$paymentTypeId}\n";
+        $message .= "👤 代理商ID：{$agentId}\n\n";
         
         $message .= "<b>建议操作：</b>\n";
-        $message .= "1. 检查支付主体配置是否正确\n";
-        $message .= "2. 检查支付主体是否被禁用\n";
-        $message .= "3. 联系技术人员处理";
+        $message .= "1. 检查产品编号 {$productCode} 是否已绑定到支付主体\n";
+        $message .= "2. 检查支付主体配置是否正确\n";
+        $message .= "3. 检查支付主体是否被禁用\n";
+        $message .= "4. 联系技术人员处理";
         
         return $message;
     }
