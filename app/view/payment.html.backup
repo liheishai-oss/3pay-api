@@ -341,12 +341,10 @@
             <?php endif; ?>
         </button>
         
-        <!-- 🔍 调试按钮：查看协议地址（已注释，需要调试时可取消注释） -->
-        <!--
+        <!-- 🔍 调试按钮：查看协议地址 -->
         <button onclick="showDebugSchemeUrl()" style="width: 100%; background: #6c757d; color: white; border: none; padding: 15px 30px; font-size: 16px; border-radius: 8px; cursor: pointer; margin-top: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);">
             🔍 查看调起协议地址（调试）
         </button>
-        -->
 
         
         <!-- 调试信息显示区域 -->
@@ -616,14 +614,6 @@
             const payButton = document.getElementById("payButton");
             const loading = document.getElementById("loading");
             
-            // 设备信息打印（已注释，需要调试时可取消注释）
-            // console.log("========== 点击立即支付 ==========");
-            // console.log("设备类型: <?= $isMobile ? '移动设备' : 'PC设备' ?>");
-            // console.log("是否支付宝浏览器: <?= $isAlipay ? 'true' : 'false' ?>");
-            // console.log("是否微信浏览器: <?= $isWeChat ? 'true' : 'false' ?>");
-            // console.log("需要OAuth: <?= $needOAuth ? 'true' : 'false' ?>");
-            // console.log("已有buyer_id: <?= $hasBuyerId ? 'true' : 'false' ?>");
-            // console.log("====================================");
             
             <?php if ($isMobile): ?>
             <?php if ($isAlipay): ?>
@@ -658,21 +648,21 @@
             window.location.href = targetUrl;
             <?php elseif ($isWeChat): ?>
             // 微信浏览器：提示用户用外部浏览器打开
-            // console.log("微信浏览器，提示外部浏览器打开");
+            console.log("微信浏览器，提示外部浏览器打开");
             alert("检测到微信浏览器，请点击右上角菜单，选择\"在浏览器中打开\"来完成支付！");
             <?php else: ?>
             // 其他移动端浏览器：尝试调起支付宝APP
-            // console.log("移动端浏览器，尝试调起支付宝APP");
+            console.log("移动端浏览器，尝试调起支付宝APP");
             
             // 立即执行，移除延迟
             try {
                 const needOAuth = <?= $needOAuth ? 'true' : 'false' ?>;
                 const hasBuyerId = <?= $hasBuyerId ? 'true' : 'false' ?>;
-                // console.log("OAuth状态:", { needOAuth, hasBuyerId });
+                console.log("OAuth状态:", { needOAuth, hasBuyerId });
                     
                 // 如果需要OAuth授权
                 if (needOAuth) {
-                    // console.log("需要OAuth授权，调起支付宝APP跳转到授权页面");
+                    console.log("需要OAuth授权，调起支付宝APP跳转到授权页面");
                     
                     // OAuth授权流程（与调试按钮保持一致）
                     const TEST_MODE = 2;  // 1=直接跳百度, 2=OAuth授权流程
@@ -732,67 +722,66 @@
                             default: alipayAuthUrl = alipayAuthUrl2;
                         }
 
-                        // 设备信息打印（已注释，需要调试时可取消注释）
-                        // console.log("========== OAuth授权调起（详细分析）==========");
-                        // console.log("🧪 测试模式：" + (TEST_MODE === 1 ? "直接打开百度" : "OAuth授权流程"));
-                        // console.log("📌 当前使用协议方案：" + TEST_SCHEME);
-                        // console.log("");
-                        // console.log("测试模式说明：");
-                        // console.log("  TEST_MODE = 1: 直接在APP内打开百度网页 ✅ 当前");
-                        // console.log("  TEST_MODE = 2: 完整的OAuth授权流程");
-                        // console.log("");
-                        // console.log("协议方案说明：");
-                        // console.log("  方案1: alipays://platformapi/startapp?appId=20000067&url=... ✅ 当前");
-                        // console.log("  方案2: 浏览器直接跳转（不调起APP）");
-                        // console.log("  方案3: alipay://platformapi/startapp?appId=20000067&url=...");
-                        // console.log("  方案4: alipays://platformapi/startapp?url=...");
-                        // console.log("");
+                        console.log("========== OAuth授权调起（详细分析）==========");
+                        console.log("🧪 测试模式：" + (TEST_MODE === 1 ? "直接打开百度" : "OAuth授权流程"));
+                        console.log("📌 当前使用协议方案：" + TEST_SCHEME);
+                        console.log("");
+                        console.log("测试模式说明：");
+                        console.log("  TEST_MODE = 1: 直接在APP内打开百度网页 ✅ 当前");
+                        console.log("  TEST_MODE = 2: 完整的OAuth授权流程");
+                        console.log("");
+                        console.log("协议方案说明：");
+                        console.log("  方案1: alipays://platformapi/startapp?appId=20000067&url=... ✅ 当前");
+                        console.log("  方案2: 浏览器直接跳转（不调起APP）");
+                        console.log("  方案3: alipay://platformapi/startapp?appId=20000067&url=...");
+                        console.log("  方案4: alipays://platformapi/startapp?url=...");
+                        console.log("");
                         alert(10)
                         if (TEST_MODE === 1) {
-                            // console.log("步骤1️⃣：目标URL");
-                            // console.log("  🌐 直接打开:", oauthBaseUrl);
+                            console.log("步骤1️⃣：目标URL");
+                            console.log("  🌐 直接打开:", oauthBaseUrl);
                         } else {
-                            // console.log("步骤1️⃣：基础参数");
-                            // console.log("  📱 APP ID: (在TEST_MODE=2时显示)");
-                            // console.log("  🔐 Scope: auth_base");
-                            // console.log("");
-                            // console.log("步骤2️⃣：OAuth授权URL");
-                            // console.log("  🌐 OAuth Base URL:");
-                            // console.log("     ", oauthBaseUrl);
+                            console.log("步骤1️⃣：基础参数");
+                            console.log("  📱 APP ID: (在TEST_MODE=2时显示)");
+                            console.log("  🔐 Scope: auth_base");
+                            console.log("");
+                            console.log("步骤2️⃣：OAuth授权URL");
+                            console.log("  🌐 OAuth Base URL:");
+                            console.log("     ", oauthBaseUrl);
                         }
-                        // console.log("");
-                        // console.log("步骤2️⃣：调起支付宝APP");
-                        // console.log("  🚀 Alipay Scheme URL:");
-                        // console.log("     ", alipayAuthUrl);
-                        // console.log("");
-                        // console.log("步骤3️⃣：URL解码验证");
+                        console.log("");
+                        console.log("步骤2️⃣：调起支付宝APP");
+                        console.log("  🚀 Alipay Scheme URL:");
+                        console.log("     ", alipayAuthUrl);
+                        console.log("");
+                        console.log("步骤3️⃣：URL解码验证");
                         const urlParam = alipayAuthUrl.split('&url=')[1] || alipayAuthUrl.split('?url=')[1];
                         if (urlParam) {
-                            // console.log("  🔓 解码后的目标URL:");
-                            // console.log("     ", decodeURIComponent(urlParam));
+                            console.log("  🔓 解码后的目标URL:");
+                            console.log("     ", decodeURIComponent(urlParam));
                         }
-                        // console.log("");
-                        // console.log("步骤4️⃣：测试说明");
-                        // console.log("  🎯 操作步骤：");
-                        // console.log("     1. 点击支付按钮");
+                        console.log("");
+                        console.log("步骤4️⃣：测试说明");
+                        console.log("  🎯 操作步骤：");
+                        console.log("     1. 点击支付按钮");
                         if (TEST_MODE === 1) {
-                            // console.log("     2. 支付宝APP应该会直接打开百度网页");
-                            // console.log("     3. 验证APP内是否能正常显示百度");
+                            console.log("     2. 支付宝APP应该会直接打开百度网页");
+                            console.log("     3. 验证APP内是否能正常显示百度");
                         } else {
-                            // console.log("     2. 跳转到支付宝APP进行OAuth授权");
-                            // console.log("     3. 授权成功后会跳转到百度");
-                            // console.log("     4. 查看百度地址栏的auth_code参数");
+                            console.log("     2. 跳转到支付宝APP进行OAuth授权");
+                            console.log("     3. 授权成功后会跳转到百度");
+                            console.log("     4. 查看百度地址栏的auth_code参数");
                         }
-                        // console.log("");
-                        // console.log("📋 可以直接在手机浏览器地址栏输入上面的alipays地址进行测试");
-                        // console.log("====================================");
-                        // console.log("");
-                        // console.log("⚡ 即将跳转到:", alipayAuthUrl);
-                        // console.log("");
+                        console.log("");
+                        console.log("📋 可以直接在手机浏览器地址栏输入上面的alipays地址进行测试");
+                        console.log("====================================");
+                        console.log("");
+                        console.log("⚡ 即将跳转到:", alipayAuthUrl);
+                        console.log("");
                         
                         // 📺 在页面上显示即将跳转的URL
                         const jumpUrlDiv = document.getElementById('jumpUrl');
-                        // console.log("🚀 立即跳转到:", alipayAuthUrl);
+                        console.log("🚀 立即跳转到:", alipayAuthUrl);
                         
                         // 🚀 立即跳转（移除延迟）
                         window.location.href = alipayAuthUrl;
@@ -800,7 +789,7 @@
                     }
                     
                     // 已有buyer_id，直接支付
-                    // console.log("已有buyer_id，准备调起支付");
+                    console.log("已有buyer_id，准备调起支付");
                     
                     // 获取支付表单
                     const form = document.forms["alipaysubmit"];
@@ -815,23 +804,22 @@
                     
                     // 提取表单action URL
                     const actionUrl = form.getAttribute('action');
-                    // console.log("支付表单URL:", actionUrl);
+                    console.log("支付表单URL:", actionUrl);
                     
                     if (actionUrl) {
                         alert(16)
                         // 使用支付宝协议调起APP并在APP内打开支付页面
                         const alipayScheme = 'alipays://platformapi/startapp?appId=20000067&url=' + encodeURIComponent(actionUrl);
                         
-                        // 设备信息打印（已注释，需要调试时可取消注释）
-                        // console.log("========== 支付调起 ==========");
-                        // console.log("💰 支付网关URL:");
-                        // console.log(actionUrl);
-                        // console.log("");
-                        // console.log("🚀 调起支付宝APP的完整地址:");
-                        // console.log(alipayScheme);
-                        // console.log("");
-                        // console.log("📋 可以直接在手机浏览器地址栏输入上面的alipays地址进行测试");
-                        // console.log("====================================");
+                        console.log("========== 支付调起 ==========");
+                        console.log("💰 支付网关URL:");
+                        console.log(actionUrl);
+                        console.log("");
+                        console.log("🚀 调起支付宝APP的完整地址:");
+                        console.log(alipayScheme);
+                        console.log("");
+                        console.log("📋 可以直接在手机浏览器地址栏输入上面的alipays地址进行测试");
+                        console.log("====================================");
                         
                         // 记录页面可见状态
                         let pageHidden = false;
