@@ -72,6 +72,17 @@ class PaymentFactory
                 throw new Exception("暂无可用支付主体");
             }
             
+            // 打印实际使用的支付宝主体 appid
+            Log::info("创建支付使用的支付宝主体", [
+                'product_code' => $productCode,
+                'agent_id' => $agentId,
+                'subject_id' => $subject->id,
+                'subject_company_name' => $subject->company_name,
+                'alipay_app_id' => $subject->alipay_app_id ?? '未配置',
+                'order_number' => $orderInfo['platform_order_no'] ?? '',
+                'payment_method' => $paymentType->product_code ?? ''
+            ]);
+            
             // 4. 获取支付配置
             $paymentConfig = self::getPaymentConfig($subject, $paymentType);
 
