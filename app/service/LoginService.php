@@ -8,7 +8,6 @@ use app\exception\MyBusinessException;
 use app\model\SystemConfig;
 use app\repository\AdminAuthRepository;
 use support\Request;
-use support\Log;
 
 class LoginService
 {
@@ -21,77 +20,11 @@ class LoginService
         // 验证用户凭据
         $admin = $this->doginDataValidator->validate($param, false);
 
-        // 获取客户端IP和域名
-        $clientIp = '0.0.0.0';
-        $remoteIp = '0.0.0.0';
-        $host = '';
-        $hostWithPort = '';
-        if ($request) {
-            // 获取真实IP（可能经过代理）
-            $clientIp = $request->getRealIp();
-            // 获取直接连接IP（更准确）
-            $remoteIp = $request->getRemoteIp();
-            // 获取域名（不包含端口）
-            $host = $request->host(true) ?? '';
-            // 获取域名（包含端口，用于更全面的检测）
-            $hostWithPort = $request->host(false) ?? '';
-            // 从header中获取host（备用方案）
-            if (empty($host)) {
-                $host = $request->header('host') ?? '';
-                // 去除端口号
-                if ($host && preg_match('/^([^:]+)/', $host, $matches)) {
-                    $host = $matches[1];
-                }
-            }
-        }
-
         // 判断是否为商户（商户管理组 group_id = 4）
         $isMerchant = $admin->group_id == 4;
-        
-        // 判断是否为本地IP（支持多种格式：127.0.0.1, ::1, localhost, 0.0.0.0）
-        $isLocalIp = $this->isLocalIp($clientIp) || $this->isLocalIp($remoteIp);
-        
-        // 判断是否为内网IP（192.168.x.x, 10.x.x.x, 172.16-31.x.x）
-        $isPrivateIp = $this->isPrivateIp($clientIp) || $this->isPrivateIp($remoteIp);
-        
-        // 判断域名是否包含localhost（检查多个来源）
-        $headerHost = $request ? ($request->header('host') ?? '') : '';
-        $isLocalhostDomain = (!empty($host) && stripos($host, 'localhost') !== false) 
-                          || (!empty($hostWithPort) && stripos($hostWithPort, 'localhost') !== false)
-                          || (!empty($headerHost) && stripos($headerHost, 'localhost') !== false);
 
-        // 商户、本地IP、内网IP或localhost域名跳过谷歌验证码检查
-        $isLocalhost = $isLocalIp || $isPrivateIp || $isLocalhostDomain;
-
-        // 调试日志：记录IP和域名检测信息
-        Log::info('登录IP检测', [
-            'username' => $admin->username,
-            'client_ip' => $clientIp,
-            'remote_ip' => $remoteIp,
-            'host' => $host,
-            'host_with_port' => $hostWithPort,
-            'header_host' => $request ? ($request->header('host') ?? '') : '',
-            'is_merchant' => $isMerchant,
-            'is_local_ip' => $isLocalIp,
-            'is_private_ip' => $isPrivateIp ?? false,
-            'is_localhost_domain' => $isLocalhostDomain,
-            'is_localhost' => $isLocalhost,
-            'skip_google_auth' => $isMerchant || $isLocalhost
-        ]);
-
-        // 商户或本地访问（IP或域名）跳过谷歌验证码检查，其他用户需要验证
-        // 如果Request对象为null或无法获取IP，也视为本地访问（开发环境）
-        if ($request === null || ($clientIp === '0.0.0.0' && $remoteIp === '0.0.0.0')) {
-            Log::warning('Request对象为null或无法获取IP，跳过谷歌验证码', [
-                'username' => $admin->username,
-                'request_is_null' => $request === null,
-                'client_ip' => $clientIp,
-                'remote_ip' => $remoteIp
-            ]);
-            $isLocalhost = true; // 强制视为本地访问
-        }
-        
-        if (!$isMerchant && !$isLocalhost) {
+        // 商户跳过谷歌验证码检查，其他用户需要验证
+        if (!$isMerchant) {
             // 检查是否开启谷歌验证
             $config = ConfigHelper::getAll();
             $googleEnabled = json_decode($config['admin_login_verify_mode'] ?? '[]', true);
@@ -112,21 +45,6 @@ class LoginService
                 
                 // 已绑定，验证谷歌验证码
                 if (empty($param['google_code'])) {
-                    // 记录详细信息用于调试
-                    Log::warning('需要谷歌验证码', [
-                        'username' => $admin->username,
-                        'client_ip' => $clientIp,
-                        'remote_ip' => $remoteIp,
-                        'host' => $host,
-                        'header_host' => $headerHost ?? '',
-                        'is_merchant' => $isMerchant,
-                        'is_localhost' => $isLocalhost,
-                        'is_local_ip' => $isLocalIp,
-                        'is_private_ip' => $isPrivateIp ?? false,
-                        'is_localhost_domain' => $isLocalhostDomain,
-                        'has_google_code' => !empty($param['google_code']),
-                        'request_is_null' => $request === null
-                    ]);
                     throw new MyBusinessException('请输入谷歌验证码');
                 }
                 
@@ -134,15 +52,6 @@ class LoginService
                     throw new MyBusinessException('谷歌验证码错误');
                 }
             }
-        } else {
-            // 记录跳过验证的信息
-            Log::info('跳过谷歌验证码', [
-                'username' => $admin->username,
-                'reason' => $isMerchant ? '商户' : '本地访问',
-                'client_ip' => $clientIp,
-                'remote_ip' => $remoteIp,
-                'host' => $host
-            ]);
         }
 
         // 检查是否首次登录（商户必须修改密码）
@@ -194,61 +103,5 @@ class LoginService
     {
         $googleAuthenticator = new \Google\Authenticator\GoogleAuthenticator();
         return $googleAuthenticator->checkCode($secret, $googleCode);
-    }
-
-    /**
-     * 判断是否为本地IP地址
-     * 
-     * @param string $ip IP地址
-     * @return bool
-     */
-    private function isLocalIp(string $ip): bool
-    {
-        if (empty($ip)) {
-            return false;
-        }
-
-        // 本地IPv4地址
-        $localIpv4 = ['127.0.0.1', 'localhost', '0.0.0.0'];
-        if (in_array($ip, $localIpv4, true)) {
-            return true;
-        }
-
-        // 本地IPv6地址
-        if ($ip === '::1' || $ip === '[::1]') {
-            return true;
-        }
-
-        // 检查是否为127.x.x.x网段
-        if (strpos($ip, '127.') === 0) {
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * 判断是否为内网IP地址
-     * 
-     * @param string $ip IP地址
-     * @return bool
-     */
-    private function isPrivateIp(string $ip): bool
-    {
-        if (empty($ip)) {
-            return false;
-        }
-
-        // 过滤掉IPv6和无效IP
-        if (!filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
-            return false;
-        }
-
-        // 检查是否为内网IP
-        // 127.0.0.0/8 - 环回地址
-        // 10.0.0.0/8 - 私有网络
-        // 172.16.0.0/12 - 私有网络
-        // 192.168.0.0/16 - 私有网络
-        return !filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE);
     }
 }
