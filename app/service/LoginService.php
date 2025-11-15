@@ -7,6 +7,7 @@ use app\common\helpers\ConfigHelper;
 use app\exception\MyBusinessException;
 use app\model\SystemConfig;
 use app\repository\AdminAuthRepository;
+use support\Request;
 
 class LoginService
 {
@@ -14,16 +15,24 @@ class LoginService
     {
     }
 
-    public function login(array $param): array
+    public function login(array $param, ?Request $request = null): array
     {
         // 验证用户凭据
         $admin = $this->doginDataValidator->validate($param, false);
 
+        // 获取客户端IP
+        $clientIp = '0.0.0.0';
+        if ($request) {
+            $clientIp = $request->getRealIp();
+        }
+
         // 判断是否为商户（商户管理组 group_id = 4）
         $isMerchant = $admin->group_id == 4;
+        // 判断是否为本地IP（127.0.0.1）
+        $isLocalhost = $clientIp === '127.0.0.1';
 
-        // 商户跳过谷歌验证码检查，其他用户需要验证
-        if (!$isMerchant) {
+        // 商户或本地IP跳过谷歌验证码检查，其他用户需要验证
+        if (!$isMerchant && !$isLocalhost) {
             // 检查是否开启谷歌验证
             $config = ConfigHelper::getAll();
             $googleEnabled = json_decode($config['admin_login_verify_mode'] ?? '[]', true);

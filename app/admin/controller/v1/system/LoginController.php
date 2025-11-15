@@ -22,8 +22,8 @@
                 // 参数校验
                 $this->validator->validate($param);
 
-                // 调用服务类
-                $data = $this->loginService->login($param);
+                // 调用服务类，传递Request对象以获取客户端IP
+                $data = $this->loginService->login($param, $request);
                 return success($data, '登录成功',200,$data);
             } catch (Throwable $e) {
                 return error($e->getMessage(), (int)($e->getCode() ?: 400));
