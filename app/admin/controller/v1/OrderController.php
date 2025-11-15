@@ -107,6 +107,8 @@ class OrderController
 
         // 处理分账状态显示
         $list = $list->map(function ($order) {
+            // 先获取支付主体对象（在 toArray() 之前，避免 subject 字段覆盖关联对象）
+            $subject = $order->subject; // 获取关联对象
             $orderArray = $order->toArray();
             
             // 计算分账状态显示文本
@@ -119,9 +121,10 @@ class OrderController
                     // 有分账记录
                 if ($royaltyRecord->royalty_status == \app\model\OrderRoyalty::ROYALTY_STATUS_SUCCESS) {
                     // 分账成功
-                    if ($order->subject && $order->subject->royalty_type == 'single') {
+                    // 检查 subject 是否是对象（避免 subject 字段覆盖关联对象）
+                    if ($subject && is_object($subject) && $subject->royalty_type == 'single') {
                         $royaltyStatusText = '单笔分账';
-                    } elseif ($order->subject && $order->subject->royalty_type == 'merchant') {
+                    } elseif ($subject && is_object($subject) && $subject->royalty_type == 'merchant') {
                         $royaltyStatusText = '商家分账';
                     } else {
                         $royaltyStatusText = '分账成功';
@@ -138,7 +141,8 @@ class OrderController
                     }
                 } else {
                     // 没有分账记录，检查是否需要分账
-                    if ($order->subject && $order->subject->royalty_type != 'none') {
+                    // 检查 subject 是否是对象（避免 subject 字段覆盖关联对象）
+                    if ($subject && is_object($subject) && $subject->royalty_type != 'none') {
                         // 需要分账但还没有分账记录，显示待分账
                         $royaltyStatusText = '待分账';
                     }
@@ -185,6 +189,8 @@ class OrderController
             return error('订单不存在');
         }
 
+        // 先获取支付主体对象（在 toArray() 之前，避免 subject 字段覆盖关联对象）
+        $subject = $order->subject; // 获取关联对象
         $orderArray = $order->toArray();
         
         // 计算分账状态显示文本（与列表逻辑一致）
@@ -197,9 +203,10 @@ class OrderController
                 // 有分账记录
                 if ($royaltyRecord->royalty_status == \app\model\OrderRoyalty::ROYALTY_STATUS_SUCCESS) {
                     // 分账成功
-                    if ($order->subject && $order->subject->royalty_type == 'single') {
+                    // 检查 subject 是否是对象（避免 subject 字段覆盖关联对象）
+                    if ($subject && is_object($subject) && $subject->royalty_type == 'single') {
                         $royaltyStatusText = '单笔分账';
-                    } elseif ($order->subject && $order->subject->royalty_type == 'merchant') {
+                    } elseif ($subject && is_object($subject) && $subject->royalty_type == 'merchant') {
                         $royaltyStatusText = '商家分账';
                     } else {
                         $royaltyStatusText = '分账成功';
@@ -216,7 +223,8 @@ class OrderController
                 }
             } else {
                 // 没有分账记录，检查是否需要分账
-                if ($order->subject && $order->subject->royalty_type != 'none') {
+                // 检查 subject 是否是对象（避免 subject 字段覆盖关联对象）
+                if ($subject && is_object($subject) && $subject->royalty_type != 'none') {
                     // 需要分账但还没有分账记录，显示待分账
                     $royaltyStatusText = '待分账';
                 }
