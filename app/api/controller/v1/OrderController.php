@@ -249,13 +249,13 @@ class OrderController
             // - 产品必须已绑定到主体（subject_product表中status=1）
             // - 支付类型必须已绑定到主体（subject_payment_type表中status=1且is_enabled=1）
             
-            // 先进行诊断：检查分别有多少主体满足各个条件
+            // 先进行诊断：检查分别有多少主体满足各个条件（只查询开启状态的主体，status=1）
             $enabledSubjects = Subject::where('agent_id', $merchant->agent_id)
-                ->where('status', Subject::STATUS_ENABLED)
+                ->where('status', 1)  // 明确使用 1 表示启用状态
                 ->count();
             
             $subjectsWithProduct = Subject::where('agent_id', $merchant->agent_id)
-                ->where('status', Subject::STATUS_ENABLED)
+                ->where('status', 1)  // 明确使用 1 表示启用状态
                 ->whereHas('subjectProducts', function($query) use ($product) {
                     $query->where('product_id', $product->id)
                           ->where('status', SubjectProduct::STATUS_ENABLED);
@@ -263,7 +263,7 @@ class OrderController
                 ->count();
             
             $subjectsWithPaymentType = Subject::where('agent_id', $merchant->agent_id)
-                ->where('status', Subject::STATUS_ENABLED)
+                ->where('status', 1)  // 明确使用 1 表示启用状态
                 ->whereHas('subjectPaymentTypes', function($query) use ($product) {
                     $query->where('payment_type_id', $product->payment_type_id)
                           ->where('status', 1)
@@ -271,9 +271,9 @@ class OrderController
                 })
                 ->count();
             
-            // 查找同时满足两个条件的主体
+            // 查找同时满足两个条件的主体（只查询开启状态的主体，status=1）
             $subject = Subject::where('agent_id', $merchant->agent_id)
-                ->where('status', Subject::STATUS_ENABLED)
+                ->where('status', 1)  // 明确使用 1 表示启用状态，排除关闭状态（status=0）
                 ->whereHas('subjectProducts', function($query) use ($product) {
                     // 检查产品绑定：产品必须已绑定且启用
                     $query->where('product_id', $product->id)
@@ -357,37 +357,6 @@ class OrderController
                 ]);
                 
                 return $this->error($errorMessage);
-            }
-            
-            // 验证选择的支付主体必须是启用状态（双重检查，确保安全）
-            if ($subject->status !== Subject::STATUS_ENABLED) {
-                Log::error('选择的支付主体未启用', [
-                    'subject_id' => $subject->id,
-                    'subject_status' => $subject->status,
-                    'expected_status' => Subject::STATUS_ENABLED,
-                    'agent_id' => $merchant->agent_id,
-                    'product_code' => $product->product_code
-                ]);
-                
-                OrderLogService::log(
-                    $traceId,
-                    $platformOrderNo,
-                    $params['merchant_order_no'],
-                    '创建',
-                    'ERROR',
-                    '节点4-支付主体状态验证',
-                    [
-                        'subject_id' => $subject->id,
-                        'subject_status' => $subject->status,
-                        'expected_status' => Subject::STATUS_ENABLED,
-                        'validation_result' => '失败',
-                        'error_reason' => '选择的支付主体未启用'
-                    ],
-                    $request->getRealIp(),
-                    $request->header('user-agent', '')
-                );
-                
-                return $this->error('选择的支付主体未启用，无法创建订单');
             }
             
             // 节点4：支付主体选择（成功）
