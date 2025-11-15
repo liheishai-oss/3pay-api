@@ -32,20 +32,45 @@ class SubjectController
         }
 
         $userData = $request->userData;
-        $isAgent = $userData['is_agent'] ?? false;
+        $isAgent = ($userData['user_group_id'] ?? 0) == 3;
         $agentId = $userData['agent_id'] ?? null;
-
+    
         // 构建查询（不加载证书，提高性能）
         $query = Subject::with(['agent', 'paymentTypes']);
 
         // 代理商只能查看自己的主体
-        if ($isAgent && $agentId) {
+        if ($isAgent) {
+            if (!$agentId) {
+                // 如果代理商没有 agent_id，返回空列表（确保安全）
+                \support\Log::warning('代理商查询主体但agent_id为空', [
+                    'admin_id' => $userData['admin_id'] ?? null,
+                    'is_agent' => $isAgent,
+                    'agent_id' => $agentId
+                ]);
+                return success([
+                    'data' => [],
+                    'total' => 0,
+                    'per_page' => $param['page_size'] ?? 10,
+                    'current_page' => $param['current_page'] ?? 1,
+                    'last_page' => 1
+                ]);
+            }
+            // 强制过滤：代理商只能看到自己的主体
+            // 忽略前端传递的 agent_id 参数，强制使用登录用户的 agent_id
             $query->where('agent_id', $agentId);
-        }
-
-        // 管理员可以按代理商筛选
-        if (!$isAgent && !empty($search['agent_id'])) {
-            $query->where('agent_id', $search['agent_id']);
+            
+            // 调试日志
+            \support\Log::info('代理商查询主体列表', [
+                'admin_id' => $userData['admin_id'] ?? null,
+                'agent_id' => $agentId,
+                'search_agent_id' => $search['agent_id'] ?? null,
+                'will_filter_by' => $agentId
+            ]);
+        } else {
+            // 管理员可以按代理商筛选
+            if (!empty($search['agent_id'])) {
+                $query->where('agent_id', $search['agent_id']);
+            }
         }
 
         // 搜索条件

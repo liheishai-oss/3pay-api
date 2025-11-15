@@ -223,8 +223,7 @@ class OrderAlertService
         $message .= "📦 订单号：<code>{$platformOrderNo}</code>\n";
         $message .= "🏪 商户订单号：<code>{$merchantOrderNo}</code>\n";
         $message .= "🏷️ 产品编号：<code>{$productCode}</code>\n";
-        $message .= "💳 支付类型ID：{$paymentTypeId}\n";
-        $message .= "👤 代理商ID：{$agentId}\n\n";
+        $message .= "💳 支付类型ID：{$paymentTypeId}\n\n";
         
         $message .= "<b>建议操作：</b>\n";
         $message .= "1. 检查产品编号 {$productCode} 是否已绑定到支付主体\n";
