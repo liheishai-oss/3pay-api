@@ -1125,6 +1125,26 @@ HTML;
             // 优先使用.env中的授权专用AppID，如果没有则使用支付主体的AppID
             $oauthAppId = \app\service\alipay\CheckOAuthConfig::getCurrentAppId($subject->alipay_app_id);
             
+            // 获取授权配置信息
+            $oauthEnabled = env('OAUTH_ALIPAY_ENABLED', false);
+            $envAppId = env('OAUTH_ALIPAY_APP_ID', '');
+            $subjectAppId = $subject->alipay_app_id;
+            $configSource = $oauthEnabled && !empty($envAppId) ? '.env配置' : '支付主体配置';
+            
+            // 输出授权配置信息
+            echo "\n";
+            echo "========================================\n";
+            echo "OAuth授权配置信息（构建授权URL）\n";
+            echo "========================================\n";
+            echo "订单号: {$orderNumber}\n";
+            echo "配置来源: {$configSource}\n";
+            echo "是否启用.env配置: " . ($oauthEnabled ? '是' : '否') . "\n";
+            echo ".env中的AppID: " . ($envAppId ?: '未配置') . "\n";
+            echo "支付主体AppID: {$subjectAppId}\n";
+            echo "实际使用的AppID: {$oauthAppId}\n";
+            echo "========================================\n";
+            echo "\n";
+            
             // 记录OAuth授权配置信息
             \app\service\alipay\CheckOAuthConfig::logConfig("订单:{$orderNumber}");
             
@@ -1137,9 +1157,10 @@ HTML;
             
             Log::info('构建OAuth授权URL', [
                 'oauth_app_id' => $oauthAppId,
-                'use_env_config' => env('OAUTH_ALIPAY_ENABLED', false),
-                'subject_app_id' => $subject->alipay_app_id,
-                'env_app_id' => env('OAUTH_ALIPAY_APP_ID', '')
+                'use_env_config' => $oauthEnabled,
+                'subject_app_id' => $subjectAppId,
+                'env_app_id' => $envAppId,
+                'config_source' => $configSource
             ]);
             
             // 检查是否需要OAuth授权（移动端且没有buyer_id）
@@ -2112,12 +2133,35 @@ HTML;
             // 获取支付配置（作为fallback，如果.env未配置则使用）
             $paymentInfo = PaymentFactory::getPaymentConfig($subject, $product->paymentType);
             
+            // 获取授权配置信息
+            $oauthEnabled = env('OAUTH_ALIPAY_ENABLED', false);
+            $envAppId = env('OAUTH_ALIPAY_APP_ID', '');
+            $subjectAppId = $subject->alipay_app_id;
+            $currentAppId = \app\service\alipay\CheckOAuthConfig::getCurrentAppId($subjectAppId);
+            $configSource = $oauthEnabled && !empty($envAppId) ? '.env配置' : '支付主体配置';
+            
+            // 输出授权配置信息
+            echo "\n";
+            echo "========================================\n";
+            echo "OAuth授权配置信息\n";
+            echo "========================================\n";
+            echo "订单号: {$orderNumber}\n";
+            echo "配置来源: {$configSource}\n";
+            echo "是否启用.env配置: " . ($oauthEnabled ? '是' : '否') . "\n";
+            echo ".env中的AppID: " . ($envAppId ?: '未配置') . "\n";
+            echo "支付主体AppID: {$subjectAppId}\n";
+            echo "实际使用的AppID: {$currentAppId}\n";
+            echo "========================================\n";
+            echo "\n";
+            
             Log::info('支付配置获取成功', [
                 'order_number' => $orderNumber,
                 'payment_info_keys' => array_keys($paymentInfo),
-                'use_env_config' => env('OAUTH_ALIPAY_ENABLED', false),
-                'env_app_id' => env('OAUTH_ALIPAY_APP_ID', ''),
-                'subject_app_id' => $subject->alipay_app_id
+                'use_env_config' => $oauthEnabled,
+                'env_app_id' => $envAppId,
+                'subject_app_id' => $subjectAppId,
+                'current_app_id' => $currentAppId,
+                'config_source' => $configSource
             ]);
             
             // 通过授权码获取用户信息（优先使用.env配置）
