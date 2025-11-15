@@ -24,7 +24,10 @@
 
                 // 调用服务类
                 $data = $this->loginService->login($param);
-                return success($data, '登录成功',200,$data);
+                // 从返回的数据中提取 token 设置到响应头
+                $token = $data['Authorization'] ?? null;
+                $headers = $token ? ['Authorization' => $token] : [];
+                return success($data, '登录成功',200,$headers);
             } catch (Throwable $e) {
                 return error($e->getMessage(), (int)($e->getCode() ?: 400));
             }
