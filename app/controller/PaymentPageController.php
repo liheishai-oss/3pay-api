@@ -1131,6 +1131,14 @@ HTML;
             $subjectAppId = $subject->alipay_app_id;
             $configSource = $oauthEnabled && !empty($envAppId) ? '.env配置' : '支付主体配置';
             
+            // 获取证书配置信息
+            $alipayPublicCertPath = env('OAUTH_ALIPAY_PUBLIC_CERT_PATH', '');
+            $alipayRootCertPath = env('OAUTH_ALIPAY_ROOT_CERT_PATH', '');
+            $appPublicCertPath = env('OAUTH_ALIPAY_APP_PUBLIC_CERT_PATH', '');
+            $alipayPublicCertExists = !empty($alipayPublicCertPath) && file_exists(base_path($alipayPublicCertPath));
+            $alipayRootCertExists = !empty($alipayRootCertPath) && file_exists(base_path($alipayRootCertPath));
+            $appPublicCertExists = !empty($appPublicCertPath) && file_exists(base_path($appPublicCertPath));
+            
             // 输出授权配置信息
             echo "\n";
             echo "========================================\n";
@@ -1142,6 +1150,11 @@ HTML;
             echo ".env中的AppID: " . ($envAppId ?: '未配置') . "\n";
             echo "支付主体AppID: {$subjectAppId}\n";
             echo "实际使用的AppID: {$oauthAppId}\n";
+            echo "\n";
+            echo "--- 证书配置 ---\n";
+            echo "支付宝公钥证书: " . ($alipayPublicCertPath ?: '未配置') . ($alipayPublicCertExists ? ' ✅' : ' ❌') . "\n";
+            echo "支付宝根证书: " . ($alipayRootCertPath ?: '未配置') . ($alipayRootCertExists ? ' ✅' : ' ❌') . "\n";
+            echo "应用公钥证书: " . ($appPublicCertPath ?: '未配置') . ($appPublicCertExists ? ' ✅' : ' ❌') . "\n";
             echo "========================================\n";
             echo "\n";
             
@@ -2112,6 +2125,67 @@ HTML;
     }
     
     /**
+     * 分析OAuth授权失败原因
+     * @param \Exception $e 异常对象
+     * @param string $appId 使用的AppID
+     * @param string $authCode 授权码
+     * @return array 分析结果
+     */
+    private static function analyzeOAuthError(\Exception $e, string $appId, string $authCode): array
+    {
+        $analysis = [];
+        $errorMessage = $e->getMessage();
+        $errorCode = $e->getCode();
+        
+        // 分析错误消息
+        if (stripos($errorMessage, 'bcadd') !== false || stripos($errorMessage, 'bcmath') !== false) {
+            $analysis['可能原因'] = 'BCMath扩展未安装或未启用';
+            $analysis['解决方案'] = '安装php-bcmath扩展：sudo apt-get install php-bcmath 或 sudo yum install php-bcmath';
+        } elseif (stripos($errorMessage, 'app_id') !== false || stripos($errorMessage, 'appid') !== false) {
+            $analysis['可能原因'] = 'AppID配置错误或与授权码不匹配';
+            $analysis['当前AppID'] = $appId ?: '未配置';
+            $analysis['解决方案'] = '检查.env中的OAUTH_ALIPAY_APP_ID或支付主体的alipay_app_id是否正确';
+        } elseif (stripos($errorMessage, 'private') !== false || stripos($errorMessage, 'key') !== false) {
+            $analysis['可能原因'] = '私钥配置错误或格式不正确';
+            $analysis['解决方案'] = '检查.env中的OAUTH_ALIPAY_APP_PRIVATE_KEY配置，确保私钥格式正确';
+        } elseif (stripos($errorMessage, 'cert') !== false || stripos($errorMessage, '证书') !== false) {
+            $analysis['可能原因'] = '证书文件不存在或路径错误';
+            $analysis['解决方案'] = '检查.env中的证书路径配置，确保证书文件存在';
+        } elseif (stripos($errorMessage, 'auth_code') !== false || stripos($errorMessage, '授权码') !== false) {
+            $analysis['可能原因'] = '授权码无效或已过期';
+            $analysis['授权码长度'] = strlen($authCode);
+            $analysis['解决方案'] = '授权码可能已过期，请重新发起授权';
+        } elseif (stripos($errorMessage, 'JSON') !== false || stripos($errorMessage, 'json') !== false) {
+            $analysis['可能原因'] = '支付宝返回的响应格式错误，无法解析JSON';
+            $analysis['解决方案'] = '检查支付宝接口是否正常，查看完整响应内容';
+        } elseif (stripos($errorMessage, 'network') !== false || stripos($errorMessage, '网络') !== false || stripos($errorMessage, 'timeout') !== false) {
+            $analysis['可能原因'] = '网络连接问题或请求超时';
+            $analysis['解决方案'] = '检查网络连接，确认可以访问支付宝接口';
+        } else {
+            $analysis['可能原因'] = '未知错误，需要查看详细错误信息';
+            $analysis['错误消息'] = $errorMessage;
+        }
+        
+        // 检查授权码
+        if (empty($authCode)) {
+            $analysis['授权码状态'] = '授权码为空';
+        } elseif (strlen($authCode) < 10) {
+            $analysis['授权码状态'] = '授权码长度异常（' . strlen($authCode) . '）';
+        } else {
+            $analysis['授权码状态'] = '授权码格式正常（长度：' . strlen($authCode) . '）';
+        }
+        
+        // 检查AppID
+        if (empty($appId)) {
+            $analysis['AppID状态'] = 'AppID未配置';
+        } else {
+            $analysis['AppID状态'] = 'AppID已配置（' . substr($appId, 0, 10) . '...）';
+        }
+        
+        return $analysis;
+    }
+    
+    /**
      * 处理OAuth回调，获取buyer_id
      * @param string $authCode 授权码
      * @param Subject $subject 支付主体
@@ -2140,6 +2214,14 @@ HTML;
             $currentAppId = \app\service\alipay\CheckOAuthConfig::getCurrentAppId($subjectAppId);
             $configSource = $oauthEnabled && !empty($envAppId) ? '.env配置' : '支付主体配置';
             
+            // 获取证书配置信息
+            $alipayPublicCertPath = env('OAUTH_ALIPAY_PUBLIC_CERT_PATH', '');
+            $alipayRootCertPath = env('OAUTH_ALIPAY_ROOT_CERT_PATH', '');
+            $appPublicCertPath = env('OAUTH_ALIPAY_APP_PUBLIC_CERT_PATH', '');
+            $alipayPublicCertExists = !empty($alipayPublicCertPath) && file_exists(base_path($alipayPublicCertPath));
+            $alipayRootCertExists = !empty($alipayRootCertPath) && file_exists(base_path($alipayRootCertPath));
+            $appPublicCertExists = !empty($appPublicCertPath) && file_exists(base_path($appPublicCertPath));
+            
             // 输出授权配置信息
             echo "\n";
             echo "========================================\n";
@@ -2151,6 +2233,11 @@ HTML;
             echo ".env中的AppID: " . ($envAppId ?: '未配置') . "\n";
             echo "支付主体AppID: {$subjectAppId}\n";
             echo "实际使用的AppID: {$currentAppId}\n";
+            echo "\n";
+            echo "--- 证书配置 ---\n";
+            echo "支付宝公钥证书: " . ($alipayPublicCertPath ?: '未配置') . ($alipayPublicCertExists ? ' ✅' : ' ❌') . "\n";
+            echo "支付宝根证书: " . ($alipayRootCertPath ?: '未配置') . ($alipayRootCertExists ? ' ✅' : ' ❌') . "\n";
+            echo "应用公钥证书: " . ($appPublicCertPath ?: '未配置') . ($appPublicCertExists ? ' ✅' : ' ❌') . "\n";
             echo "========================================\n";
             echo "\n";
             
@@ -2165,30 +2252,82 @@ HTML;
             ]);
             
             // 通过授权码获取用户信息（优先使用.env配置）
-            $userInfo = AlipayOAuthService::getTokenByAuthCode($authCode, $paymentInfo);
-            
-            Log::info('调用AlipayOAuthService成功', [
-                'order_number' => $orderNumber,
-                'user_info_keys' => array_keys($userInfo),
-                'user_info' => $userInfo
-            ]);
-            
-            $buyerId = $userInfo['user_id'] ?? '';
-            
-            if (empty($buyerId)) {
-                Log::warning('user_id为空', [
+            try {
+                $userInfo = AlipayOAuthService::getTokenByAuthCode($authCode, $paymentInfo);
+                
+                Log::info('调用AlipayOAuthService成功', [
                     'order_number' => $orderNumber,
+                    'user_info_keys' => array_keys($userInfo),
                     'user_info' => $userInfo
                 ]);
+                
+                $buyerId = $userInfo['user_id'] ?? '';
+                
+                if (empty($buyerId)) {
+                    $errorMsg = 'user_id为空，授权响应中未包含用户ID';
+                    echo "\n";
+                    echo "========================================\n";
+                    echo "❌ OAuth授权失败\n";
+                    echo "========================================\n";
+                    echo "订单号: {$orderNumber}\n";
+                    echo "失败原因: {$errorMsg}\n";
+                    echo "授权响应数据: " . json_encode($userInfo, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . "\n";
+                    echo "========================================\n";
+                    echo "\n";
+                    
+                    Log::warning('user_id为空', [
+                        'order_number' => $orderNumber,
+                        'user_info' => $userInfo
+                    ]);
+                } else {
+                    Log::info('OAuth授权成功，获取到buyer_id', [
+                        'order_number' => $orderNumber,
+                        'buyer_id' => $buyerId,
+                        'auth_code' => substr($authCode, 0, 10) . '...'
+                    ]);
+                }
+                
+                return $buyerId;
+            } catch (\Exception $e) {
+                // 详细输出失败原因
+                $errorMessage = $e->getMessage();
+                $errorCode = $e->getCode();
+                $errorFile = $e->getFile();
+                $errorLine = $e->getLine();
+                $errorTrace = $e->getTraceAsString();
+                
+                echo "\n";
+                echo "========================================\n";
+                echo "❌ OAuth授权失败 - 详细错误信息\n";
+                echo "========================================\n";
+                echo "订单号: {$orderNumber}\n";
+                echo "错误消息: {$errorMessage}\n";
+                echo "错误代码: {$errorCode}\n";
+                echo "错误文件: {$errorFile}\n";
+                echo "错误行号: {$errorLine}\n";
+                echo "\n";
+                echo "--- 错误堆栈 ---\n";
+                echo $errorTrace . "\n";
+                echo "\n";
+                echo "--- 配置信息 ---\n";
+                echo "配置来源: {$configSource}\n";
+                echo "实际使用的AppID: {$currentAppId}\n";
+                echo "授权码长度: " . strlen($authCode) . "\n";
+                echo "授权码预览: " . substr($authCode, 0, 20) . "...\n";
+                echo "========================================\n";
+                echo "\n";
+                
+                // 分析失败原因
+                $analysis = self::analyzeOAuthError($e, $currentAppId, $authCode);
+                echo "--- 失败原因分析 ---\n";
+                foreach ($analysis as $key => $value) {
+                    echo "{$key}: {$value}\n";
+                }
+                echo "========================================\n";
+                echo "\n";
+                
+                throw $e;
             }
-            
-            Log::info('OAuth授权成功，获取到buyer_id', [
-                'order_number' => $orderNumber,
-                'buyer_id' => $buyerId,
-                'auth_code' => substr($authCode, 0, 10) . '...'
-            ]);
-            
-            return $buyerId;
             
         } catch (\Exception $e) {
             Log::error('OAuth回调处理失败', [

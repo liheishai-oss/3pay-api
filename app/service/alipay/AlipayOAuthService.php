@@ -189,22 +189,69 @@ class AlipayOAuthService
                 'is_pure_base64' => !preg_match('/-----BEGIN|-----END/', $appPrivateKey),
             ]);
 
-            // 如果.env中配置了证书路径，使用.env的；否则使用支付主体的证书
+            // 从.env中读取证书路径（只使用.env配置，不使用支付主体的证书）
+            $alipayPublicCertPath = env('OAUTH_ALIPAY_PUBLIC_CERT_PATH', '');
+            $alipayRootCertPath = env('OAUTH_ALIPAY_ROOT_CERT_PATH', '');
+            $appPublicCertPath = env('OAUTH_ALIPAY_APP_PUBLIC_CERT_PATH', '');
+            
+            Log::info('[步骤12] 读取.env证书路径', [
+                'alipay_public_cert_path' => $alipayPublicCertPath ?: '未配置',
+                'alipay_root_cert_path' => $alipayRootCertPath ?: '未配置',
+                'app_public_cert_path' => $appPublicCertPath ?: '未配置',
+            ]);
+            
+            // 检查证书文件是否存在
+            $alipayPublicCertExists = !empty($alipayPublicCertPath) && file_exists(base_path($alipayPublicCertPath));
+            $alipayRootCertExists = !empty($alipayRootCertPath) && file_exists(base_path($alipayRootCertPath));
+            $appPublicCertExists = !empty($appPublicCertPath) && file_exists(base_path($appPublicCertPath));
+            
+            Log::info('[步骤13] 检查证书文件是否存在', [
+                'alipay_public_cert_exists' => $alipayPublicCertExists,
+                'alipay_public_cert_full_path' => $alipayPublicCertPath ? base_path($alipayPublicCertPath) : 'N/A',
+                'alipay_root_cert_exists' => $alipayRootCertExists,
+                'alipay_root_cert_full_path' => $alipayRootCertPath ? base_path($alipayRootCertPath) : 'N/A',
+                'app_public_cert_exists' => $appPublicCertExists,
+                'app_public_cert_full_path' => $appPublicCertPath ? base_path($appPublicCertPath) : 'N/A',
+            ]);
+            
+            // 只使用.env中的证书配置
             $config = [
                 'appid' => $appId,
                 'AppPrivateKey' => $appPrivateKey,
-                'alipayCertPublicKey' => !empty($alipayPublicCertPath) ? $alipayPublicCertPath : ($paymentInfo['alipayCertPublicKey'] ?? ''),
-                'alipayRootCert' => !empty($alipayRootCertPath) ? $alipayRootCertPath : ($paymentInfo['alipayRootCert'] ?? ''),
-                'appCertPublicKey' => !empty($appPublicCertPath) ? $appPublicCertPath : ($paymentInfo['appCertPublicKey'] ?? ''),
+                'alipayCertPublicKey' => $alipayPublicCertPath,
+                'alipayRootCert' => $alipayRootCertPath,
+                'appCertPublicKey' => $appPublicCertPath,
                 'notify_url' => config('app.url') . '/api/v1/payment/notify/alipay',
                 'sandbox' => false,
             ];
             
-            // 如果证书路径为空，尝试从支付配置中获取
-            if (empty($config['alipayCertPublicKey']) && !empty($paymentInfo)) {
-                $config['alipayCertPublicKey'] = $paymentInfo['alipayCertPublicKey'] ?? '';
-                $config['alipayRootCert'] = $paymentInfo['alipayRootCert'] ?? '';
-                $config['appCertPublicKey'] = $paymentInfo['appCertPublicKey'] ?? '';
+            // 验证证书配置完整性
+            if (empty($config['alipayCertPublicKey']) || empty($config['alipayRootCert']) || empty($config['appCertPublicKey'])) {
+                $missingCerts = [];
+                if (empty($config['alipayCertPublicKey'])) $missingCerts[] = 'OAUTH_ALIPAY_PUBLIC_CERT_PATH';
+                if (empty($config['alipayRootCert'])) $missingCerts[] = 'OAUTH_ALIPAY_ROOT_CERT_PATH';
+                if (empty($config['appCertPublicKey'])) $missingCerts[] = 'OAUTH_ALIPAY_APP_PUBLIC_CERT_PATH';
+                
+                Log::error('[步骤13.5] OAuth证书配置不完整', [
+                    'missing_certs' => $missingCerts,
+                    'config' => $config
+                ]);
+                
+                throw new Exception("OAuth授权证书配置不完整：请在.env中配置以下证书路径：" . implode(', ', $missingCerts));
+            }
+            
+            // 验证证书文件是否存在
+            if (!$alipayPublicCertExists || !$alipayRootCertExists || !$appPublicCertExists) {
+                $missingFiles = [];
+                if (!$alipayPublicCertExists) $missingFiles[] = '支付宝公钥证书: ' . base_path($alipayPublicCertPath);
+                if (!$alipayRootCertExists) $missingFiles[] = '支付宝根证书: ' . base_path($alipayRootCertPath);
+                if (!$appPublicCertExists) $missingFiles[] = '应用公钥证书: ' . base_path($appPublicCertPath);
+                
+                Log::error('[步骤13.6] OAuth证书文件不存在', [
+                    'missing_files' => $missingFiles,
+                ]);
+                
+                throw new Exception("OAuth授权证书文件不存在：\n" . implode("\n", $missingFiles));
             }
             
             Log::info('[步骤14] 配置构建完成', [
@@ -212,11 +259,15 @@ class AlipayOAuthService
                 'has_private_key' => !empty($appPrivateKey),
                 'private_key_length' => strlen($appPrivateKey),
                 'private_key_newline_count' => substr_count($appPrivateKey, "\n"),
-                'has_cert' => !empty($alipayPublicCertPath) || !empty($alipayRootCertPath) || !empty($appPublicCertPath),
                 'cert_paths' => [
                     'alipay_public' => $config['alipayCertPublicKey'],
                     'alipay_root' => $config['alipayRootCert'],
                     'app_public' => $config['appCertPublicKey']
+                ],
+                'cert_files_exist' => [
+                    'alipay_public' => $alipayPublicCertExists,
+                    'alipay_root' => $alipayRootCertExists,
+                    'app_public' => $appPublicCertExists
                 ]
             ]);
             
@@ -345,11 +396,27 @@ class AlipayOAuthService
                     'result_properties' => array_keys(get_object_vars($result))
                 ]);
             } catch (\Exception $e) {
+                $errorMessage = $e->getMessage();
+                $errorCode = $e->getCode();
+                $errorFile = $e->getFile();
+                $errorLine = $e->getLine();
+                
+                echo "\n";
+                echo "========================================\n";
+                echo "❌ 支付宝SDK调用失败\n";
+                echo "========================================\n";
+                echo "错误消息: {$errorMessage}\n";
+                echo "错误代码: {$errorCode}\n";
+                echo "错误文件: {$errorFile}\n";
+                echo "错误行号: {$errorLine}\n";
+                echo "========================================\n";
+                echo "\n";
+                
                 Log::error("[OAuth-步骤X] getToken调用异常", [
-                    'error_message' => $e->getMessage(),
-                    'error_code' => $e->getCode(),
-                    'error_file' => $e->getFile(),
-                    'error_line' => $e->getLine(),
+                    'error_message' => $errorMessage,
+                    'error_code' => $errorCode,
+                    'error_file' => $errorFile,
+                    'error_line' => $errorLine,
                     'trace' => $e->getTraceAsString(),
                 ]);
                 throw $e;
@@ -377,11 +444,22 @@ class AlipayOAuthService
             $response = json_decode($bodyContent, true);
             
             if (json_last_error() !== JSON_ERROR_NONE) {
+                $jsonError = json_last_error_msg();
+                echo "\n";
+                echo "========================================\n";
+                echo "❌ JSON解析失败\n";
+                echo "========================================\n";
+                echo "JSON错误: {$jsonError}\n";
+                echo "响应内容长度: " . strlen($bodyContent) . "\n";
+                echo "响应内容预览: " . substr($bodyContent, 0, 500) . "\n";
+                echo "========================================\n";
+                echo "\n";
+                
                 Log::error("JSON解析失败", [
-                    'json_error' => json_last_error_msg(),
+                    'json_error' => $jsonError,
                     'body' => $bodyContent
                 ]);
-                throw new Exception("JSON解析失败: " . json_last_error_msg());
+                throw new Exception("JSON解析失败: " . $jsonError);
             }
             
             Log::info("响应JSON解析成功", [
@@ -389,6 +467,15 @@ class AlipayOAuthService
             ]);
             
             if (!isset($response['alipay_system_oauth_token_response'])) {
+                echo "\n";
+                echo "========================================\n";
+                echo "❌ OAuth响应格式错误\n";
+                echo "========================================\n";
+                echo "错误: 响应中缺少alipay_system_oauth_token_response字段\n";
+                echo "响应数据结构: " . json_encode($response, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . "\n";
+                echo "========================================\n";
+                echo "\n";
+                
                 Log::error("OAuth令牌响应格式错误", [
                     'response' => $response
                 ]);
@@ -408,6 +495,15 @@ class AlipayOAuthService
             $accessToken = $tokenResponse['access_token'] ?? '';
             
             if (empty($userId)) {
+                echo "\n";
+                echo "========================================\n";
+                echo "❌ 无法获取用户ID\n";
+                echo "========================================\n";
+                echo "错误: OAuth响应中未包含user_id字段\n";
+                echo "响应数据: " . json_encode($tokenResponse, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT) . "\n";
+                echo "========================================\n";
+                echo "\n";
+                
                 Log::error("无法从OAuth响应中获取用户ID", [
                     'token_response' => $tokenResponse
                 ]);
