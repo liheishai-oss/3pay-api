@@ -3,7 +3,6 @@
 namespace app\api\controller\v1;
 
 use app\model\Order;
-use app\model\Product;
 use app\service\payment\PaymentFactory;
 use support\Request;
 use support\Log;
@@ -121,63 +120,33 @@ class PaymentNotifyController
             echo "  - 订单金额: {$order->order_amount}\n";
             echo "  - 过期时间: " . ($order->expire_time ?? '未设置') . "\n";
             
-            // 检查订单是否过期（防止过期订单的支付回调被处理）
-            echo "【步骤4】检查订单是否过期\n";
-            $isExpired = $order->expire_time && strtotime($order->expire_time) < time();
-            if ($isExpired && ($order->pay_status == Order::PAY_STATUS_CREATED || $order->pay_status == Order::PAY_STATUS_OPENED)) {
-                echo "  - 订单已过期，拒绝处理\n";
-                \app\service\OrderLogService::log(
-                    $order->trace_id ?? '',
-                    $order->platform_order_no,
-                    $order->merchant_order_no,
-                    '支付回调', 'WARN', '节点21-订单已过期',
-                    [
-                        'action' => '拒绝过期订单支付回调',
-                        'expire_time' => $order->expire_time,
-                        'current_time' => date('Y-m-d H:i:s'),
-                        'trade_no' => $params['trade_no'] ?? ''
-                    ],
-                    $request->getRealIp(),
-                    $request->header('user-agent', '')
-                );
-                Log::warning('订单已过期，拒绝支付回调', [
-                    'order_no' => $params['out_trade_no'],
-                    'expire_time' => $order->expire_time,
-                    'trade_no' => $params['trade_no'] ?? ''
-                ]);
-                
-                // 如果订单还未关闭，先关闭订单
-                if ($order->pay_status == Order::PAY_STATUS_CREATED || $order->pay_status == Order::PAY_STATUS_OPENED) {
-                    $now = date('Y-m-d H:i:s');
-                    $order->pay_status = Order::PAY_STATUS_CLOSED;
-                    $order->close_time = $now;
-                    $order->save();
-                }
-                
-                echo str_repeat("=", 80) . "\n\n";
-                return 'fail'; // 返回fail，让支付宝知道我们拒绝了这次回调
-            }
-            echo "  - 订单未过期，继续处理\n";
-
-            // 获取产品信息
-            echo "【步骤5】获取产品信息\n";
-            $product = Product::find($order->product_id);
-            if (!$product) {
+            // 注意：如果支付宝回调了TRADE_SUCCESS，说明支付已完成，即使订单过期也应该接受
+            // 订单过期检查已在创建订单时处理，回调时不再检查过期（避免拒绝已完成的支付）
+            
+            // 加载产品信息（使用关联，避免重复查询）
+            echo "【步骤4】加载产品信息\n";
+            $order->load('product.paymentType');
+            if (!$order->product) {
                 echo "  - 产品不存在: {$order->product_id}\n";
                 Log::warning('产品不存在', ['product_id' => $order->product_id]);
                 echo str_repeat("=", 80) . "\n\n";
                 return 'fail';
             }
-            echo "  - 产品ID: {$product->id}\n";
-            echo "  - 产品代码: {$product->product_code}\n";
+            if (!$order->product->paymentType) {
+                echo "  - 产品未配置支付类型\n";
+                Log::warning('产品未配置支付类型', ['product_id' => $order->product_id]);
+                echo str_repeat("=", 80) . "\n\n";
+                return 'fail';
+            }
+            echo "  - 产品ID: {$order->product->id}\n";
+            echo "  - 产品代码: {$order->product->product_code}\n";
 
-            // 通过支付工厂处理通知
-            echo "【步骤6】验证签名和处理通知\n";
+            // 通过支付工厂处理通知（直接传递订单对象，避免重复查询）
+            echo "【步骤5】验证签名和处理通知\n";
             try {
                 $result = PaymentFactory::handlePaymentNotify(
-                    $product->product_code,
-                    $params,
-                    $order->agent_id
+                    $order,
+                    $params
                 );
                 
                 echo "  - 处理结果返回\n";
@@ -198,16 +167,44 @@ class PaymentNotifyController
             if (isset($result) && is_array($result) && !empty($result['success'])) {
                 echo "  - 签名验证成功\n";
                 echo "  - 通知处理成功\n";
+                
+                // 检查是否是重复回调
+                $isDuplicate = isset($result['message']) && $result['message'] === '通知已处理';
+                
+                if ($isDuplicate) {
+                    echo "  - 检测到重复回调\n";
+                    // 刷新订单数据
+                    $order->refresh();
+                    // 检查订单状态，如果已经是已支付，则跳过更新
+                    if ($order->pay_status == Order::PAY_STATUS_PAID) {
+                        echo "  - 订单状态已是已支付，跳过更新\n";
+                        \app\service\OrderLogService::log(
+                            $order->trace_id ?? '',
+                            $order->platform_order_no,
+                            $order->merchant_order_no,
+                            '支付回调', 'INFO', '节点22-重复回调已跳过',
+                            ['action'=>'重复回调，订单已支付','trade_no'=>$params['trade_no']??''],
+                            $request->getRealIp(), $request->header('user-agent', '')
+                        );
+                        $duration = round((microtime(true) - $startTime) * 1000, 2);
+                        echo "【完成】支付回调处理成功（重复回调已跳过），耗时: {$duration}ms\n";
+                        echo str_repeat("=", 80) . "\n\n";
+                        return 'success';
+                    } else {
+                        echo "  - 订单状态未更新为已支付（状态: {$order->pay_status}），将重新更新\n";
+                    }
+                }
+                
                 \app\service\OrderLogService::log(
                     $order->trace_id ?? '',
                     $order->platform_order_no,
                     $order->merchant_order_no,
                     '支付回调', 'INFO', '节点22-回调处理成功',
-                    ['action'=>'支付回调成功','trade_no'=>$params['trade_no']??'','params'=>$params],
+                    ['action'=>'支付回调成功','trade_no'=>$params['trade_no']??'','params'=>$params, 'is_duplicate'=>$isDuplicate],
                     $request->getRealIp(), $request->header('user-agent', '')
                 );
                 // 更新订单状态（记录支付IP，从回调请求IP获取）
-                echo "【步骤7】更新订单状态\n";
+                echo "【步骤6】更新订单状态\n";
                 try {
                     $this->updateOrderStatus($order, $params, $request->getRealIp(), $request->header('user-agent', ''));
                     echo "  - 订单状态更新完成\n";
@@ -219,7 +216,8 @@ class PaymentNotifyController
                 }
                 Log::info('支付通知处理成功', [
                     'order_no' => $params['out_trade_no'],
-                    'trade_no' => $params['trade_no'] ?? ''
+                    'trade_no' => $params['trade_no'] ?? '',
+                    'is_duplicate' => $isDuplicate
                 ]);
                 
                 $duration = round((microtime(true) - $startTime) * 1000, 2);
@@ -280,14 +278,14 @@ class PaymentNotifyController
     private function updateOrderStatus(Order $order, array $notifyParams, $payIp = '', $userAgent = '')
     {
         try {
-            echo "  【7.1】开始事务\n";
+            echo "  【6.1】开始事务\n";
             echo "    - 订单ID: {$order->id}\n";
             echo "    - 订单号: {$order->platform_order_no}\n";
             echo "    - 当前支付状态: {$order->pay_status}\n";
             Db::beginTransaction();
 
             // 更新订单状态
-            echo "  【7.2】准备更新订单数据\n";
+            echo "  【6.2】准备更新订单数据\n";
             $updateData = [
                 'pay_status' => Order::PAY_STATUS_PAID,
                 // 支付确认后仅标记待通知，实际通知成功后再置成功
@@ -329,20 +327,20 @@ class PaymentNotifyController
                 ]);
             }
             
-            echo "  【7.3】执行订单更新\n";
+            echo "  【6.3】执行订单更新\n";
             $updateResult = $order->update($updateData);
             echo "    - 更新结果: " . ($updateResult ? '成功' : '失败') . "\n";
             
             // 刷新订单数据以获取最新状态
             $order->refresh();
-            echo "  【7.3】订单状态已更新\n";
+            echo "  【6.3】订单状态已更新\n";
             echo "    - 支付状态: {$order->pay_status} (已更新为: " . Order::PAY_STATUS_PAID . ")\n";
             echo "    - 支付宝交易号: " . ($order->alipay_order_no ?? '') . "\n";
             echo "    - 支付时间: " . ($order->pay_time ?? '未设置') . "\n";
             echo "    - 支付IP: " . ($order->pay_ip ?: '未记录') . "\n";
 
             // 发送商户通知（成功后回写 SUCCESS），自动回调不绕过熔断
-            echo "  【7.4】发送商户通知\n";
+            echo "  【6.4】发送商户通知\n";
             $notifyResult = \app\service\MerchantNotifyService::send($order, $notifyParams, ['manual' => false]);
             if ($notifyResult['success']) {
                 echo "    - 商户通知发送成功\n";
@@ -350,12 +348,12 @@ class PaymentNotifyController
                 echo "    - 商户通知发送失败: " . ($notifyResult['message'] ?? '未知错误') . "\n";
             }
 
-            echo "  【7.5】提交事务\n";
+            echo "  【6.5】提交事务\n";
             Db::commit();
 
             // 订单支付成功后，将订单加入分账队列（秒级异步处理，不阻塞回调响应）
             try {
-                echo "  【7.6】加入分账队列\n";
+                echo "  【6.6】加入分账队列\n";
                 // 刷新订单数据以获取最新状态
                 $order->refresh();
                 

@@ -411,47 +411,63 @@ class PaymentFactory
 
     /**
      * 处理支付通知
-     * @param string $productCode 产品编号
+     * @param \app\model\Order $order 订单对象（已加载product和paymentType关联）
      * @param array $notifyParams 通知参数
-     * @param int $agentId 代理商ID
      * @return array 处理结果
      * @throws Exception
      */
-    public static function handlePaymentNotify(string $productCode, array $notifyParams, int $agentId): array
+    public static function handlePaymentNotify(\app\model\Order $order, array $notifyParams): array
     {
         try {
-            echo "  【6.1】开始处理支付通知\n";
-            echo "    - 产品代码: {$productCode}\n";
-            echo "    - 代理商ID: {$agentId}\n";
+            echo "  【5.1】开始处理支付通知\n";
+            echo "    - 订单ID: {$order->id}\n";
+            echo "    - 订单号: {$order->platform_order_no}\n";
             
-            // 获取产品和支付类型信息
-            echo "  【6.2】查询产品信息\n";
-            $product = Product::where('product_code', $productCode)
-                ->where('agent_id', $agentId)
-                ->with('paymentType')
-                ->first();
-
-            if (!$product || !$product->paymentType) {
-                $errorMsg = "产品或支付类型不存在";
+            // 验证订单是否已加载产品和支付类型
+            if (!$order->product) {
+                $errorMsg = "订单未加载产品信息";
                 echo "    - 错误: {$errorMsg}\n";
                 throw new Exception($errorMsg);
             }
+            if (!$order->product->paymentType) {
+                $errorMsg = "产品未配置支付类型";
+                echo "    - 错误: {$errorMsg}\n";
+                throw new Exception($errorMsg);
+            }
+            
+            $product = $order->product;
             echo "    - 产品ID: {$product->id}\n";
+            echo "    - 产品代码: {$product->product_code}\n";
             echo "    - 支付类型ID: {$product->payment_type_id}\n";
 
-            // 获取支付配置
-            echo "  【6.3】查询支付主体\n";
-            $subject = Subject::where('agent_id', $agentId)
-                ->where('status', Subject::STATUS_ENABLED)
-                ->whereHas('subjectPaymentTypes', function($query) use ($product) {
-                    $query->where('payment_type_id', $product->payment_type_id)
-                          ->where('status', 1)
-                          ->where('is_enabled', 1);
-                })
-                ->first();
+            // 获取支付配置（优先使用订单中已保存的subject_id，如果没有则查询）
+            echo "  【5.2】查询支付主体\n";
+            $subject = null;
+            if ($order->subject_id) {
+                // 优先使用订单中保存的主体ID
+                $subject = Subject::where('id', $order->subject_id)
+                    ->where('status', Subject::STATUS_ENABLED)
+                    ->first();
+                if ($subject) {
+                    echo "    - 使用订单中保存的主体ID: {$order->subject_id}\n";
+                }
+            }
+            
+            // 如果订单中没有主体或主体不可用，则查询可用主体
+            if (!$subject) {
+                echo "    - 订单中无主体或主体不可用，查询可用主体\n";
+                $subject = Subject::where('agent_id', $order->agent_id)
+                    ->where('status', Subject::STATUS_ENABLED)
+                    ->whereHas('subjectPaymentTypes', function($query) use ($product) {
+                        $query->where('payment_type_id', $product->payment_type_id)
+                              ->where('status', 1)
+                              ->where('is_enabled', 1);
+                    })
+                    ->first();
+            }
 
             if (!$subject) {
-                $errorMsg = "支付主体不存在";
+                $errorMsg = "支付主体不存在或不可用";
                 echo "    - 错误: {$errorMsg}\n";
                 throw new Exception($errorMsg);
             }
@@ -459,15 +475,15 @@ class PaymentFactory
             echo "    - 主体名称: {$subject->company_name}\n";
             echo "    - 支付宝APPID: {$subject->alipay_app_id}\n";
 
-            echo "  【6.4】获取支付配置\n";
+            echo "  【5.3】获取支付配置\n";
             $paymentConfig = self::getPaymentConfig($subject, $product->paymentType);
             echo "    - 配置获取成功\n";
 
             // 调用支付宝通知处理
-            echo "  【6.5】调用支付宝通知处理服务\n";
+            echo "  【5.4】调用支付宝通知处理服务\n";
             $alipayService = new AlipayService();
             $result = $alipayService->handlePaymentNotify($notifyParams, $paymentConfig);
-            echo "  【6.6】支付宝通知处理完成\n";
+            echo "  【5.5】支付宝通知处理完成\n";
             echo "    - 处理结果: " . ($result['success'] ? '成功' : '失败') . "\n";
             if (!$result['success']) {
                 echo "    - 错误信息: " . ($result['message'] ?? '未知错误') . "\n";
@@ -475,12 +491,12 @@ class PaymentFactory
             return $result;
 
         } catch (Exception $e) {
-            echo "  【6.错误】支付通知处理异常\n";
+            echo "  【5.错误】支付通知处理异常\n";
             echo "    - 错误信息: " . $e->getMessage() . "\n";
             echo "    - 错误位置: " . $e->getFile() . ":" . $e->getLine() . "\n";
             Log::error("支付通知处理失败", [
-                'product_code' => $productCode,
-                'agent_id' => $agentId,
+                'order_id' => $order->id ?? null,
+                'platform_order_no' => $order->platform_order_no ?? null,
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
