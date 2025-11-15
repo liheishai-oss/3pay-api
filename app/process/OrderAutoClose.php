@@ -3,17 +3,16 @@
 namespace app\process;
 
 use Workerman\Timer;
-use Workerman\Worker;
 use support\Db;
 use support\Log;
 use app\model\Order;
 
 class OrderAutoClose
 {
-    public function onWorkerStart(Worker $worker): void
+    public function onWorkerStart(): void
     {
         // 每3秒检查一次超时未支付订单并关闭
-        Timer::add(3, function () use ($worker) {
+        Timer::add(3, function () {
             $now = date('Y-m-d H:i:s');
             try {
                 // 查询已打开且已过期的订单
@@ -75,7 +74,7 @@ class OrderAutoClose
                                 'expire_time' => $order->expire_time
                             ],
                             'SYSTEM',
-                            ''
+                            null
                         );
                     } else {
                         $skippedCount++;
@@ -101,7 +100,7 @@ class OrderAutoClose
                             ->where('pay_status', Order::PAY_STATUS_CLOSED)->count();
                         if ($count > 20) {
                             \app\service\OrderAlertService::sendAsyncTelegram('订单自动关闭异常高发：昨日关闭'.$count.'单', 'P2');
-                            \app\service\OrderLogService::log('','','','自动关闭', 'WARN', '节点32-关闭异常告警', ['action'=>'关闭超限','count'=>$count], 'SYSTEM', '');
+                            \app\service\OrderLogService::log('','','','自动关闭', 'WARN', '节点32-关闭异常告警', ['action'=>'关闭超限','count'=>$count], 'SYSTEM', null);
                         }
                     }
                 }
