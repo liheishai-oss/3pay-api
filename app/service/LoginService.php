@@ -19,35 +19,41 @@ class LoginService
         // 验证用户凭据
         $admin = $this->doginDataValidator->validate($param, false);
 
-        // 检查是否开启谷歌验证
-        $config = ConfigHelper::getAll();
-        $googleEnabled = json_decode($config['admin_login_verify_mode'] ?? '[]', true);
-        
-        if (is_array($googleEnabled) && in_array('google', $googleEnabled)) {
-            // 检查用户是否已绑定谷歌验证码
-            $googleSecret = $this->repository->getGoogle2FASecret($admin->id);
+        // 判断是否为商户（商户管理组 group_id = 4）
+        $isMerchant = $admin->group_id == 4;
+
+        // 商户跳过谷歌验证码检查，其他用户需要验证
+        if (!$isMerchant) {
+            // 检查是否开启谷歌验证
+            $config = ConfigHelper::getAll();
+            $googleEnabled = json_decode($config['admin_login_verify_mode'] ?? '[]', true);
             
-            if (!$googleSecret) {
-                // 未绑定，返回需要绑定的信息
-                return [
-                    'need_bind_google' => true,
-                    'admin_id' => $admin->id,
-                    'username' => $admin->username,
-                    'message' => '请先绑定谷歌验证码'
-                ];
-            }
-            
-            // 已绑定，验证谷歌验证码
-            if (empty($param['google_code'])) {
-                throw new MyBusinessException('请输入谷歌验证码');
-            }
-            
-            if (!$this->verifyGoogleAuth($param['google_code'], $googleSecret)) {
-                throw new MyBusinessException('谷歌验证码错误');
+            if (is_array($googleEnabled) && in_array('google', $googleEnabled)) {
+                // 检查用户是否已绑定谷歌验证码
+                $googleSecret = $this->repository->getGoogle2FASecret($admin->id);
+                
+                if (!$googleSecret) {
+                    // 未绑定，返回需要绑定的信息
+                    return [
+                        'need_bind_google' => true,
+                        'admin_id' => $admin->id,
+                        'username' => $admin->username,
+                        'message' => '请先绑定谷歌验证码'
+                    ];
+                }
+                
+                // 已绑定，验证谷歌验证码
+                if (empty($param['google_code'])) {
+                    throw new MyBusinessException('请输入谷歌验证码');
+                }
+                
+                if (!$this->verifyGoogleAuth($param['google_code'], $googleSecret)) {
+                    throw new MyBusinessException('谷歌验证码错误');
+                }
             }
         }
 
-        // 检查是否首次登录（在谷歌验证之后）
+        // 检查是否首次登录（商户必须修改密码）
         if ($admin->is_first_login == 1) {
             return [
                 'need_change_password' => true,
