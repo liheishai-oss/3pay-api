@@ -6,6 +6,9 @@ require_once __DIR__ . '/vendor/autoload.php';
 // 加载环境变量
 loadEnvFile();
 
+// 检查必需的 PHP 扩展
+checkRequiredExtensions();
+
 // 检查 Telegram Webhook 信息
 checkTelegramWebhook();
 
@@ -43,6 +46,58 @@ function loadEnvFile()
                 }
             }
         }
+    }
+}
+
+/**
+ * 检查必需的 PHP 扩展
+ */
+function checkRequiredExtensions()
+{
+    $requiredExtensions = [
+        'bcmath' => 'BCMath 扩展（支付宝 SDK 需要）',
+        'curl' => 'cURL 扩展（HTTP 请求需要）',
+        'json' => 'JSON 扩展（数据处理需要）',
+        'mbstring' => 'mbstring 扩展（字符串处理需要）',
+        'openssl' => 'OpenSSL 扩展（加密功能需要）',
+        'redis' => 'Redis 扩展（缓存功能需要）',
+    ];
+    
+    $missingExtensions = [];
+    
+    foreach ($requiredExtensions as $ext => $description) {
+        if (!extension_loaded($ext)) {
+            $missingExtensions[] = [
+                'name' => $ext,
+                'description' => $description
+            ];
+        }
+    }
+    
+    if (!empty($missingExtensions)) {
+        echo "❌ 缺少必需的 PHP 扩展:\n\n";
+        foreach ($missingExtensions as $ext) {
+            echo "   - {$ext['name']}: {$ext['description']}\n";
+        }
+        echo "\n";
+        echo "📖 安装方法:\n";
+        echo "   Ubuntu/Debian: sudo apt-get install php-{extension-name}\n";
+        echo "   例如: sudo apt-get install php-bcmath\n\n";
+        echo "   CentOS/RHEL: sudo yum install php-{extension-name}\n";
+        echo "   例如: sudo yum install php-bcmath\n\n";
+        echo "   安装后需要重启 PHP-FPM 或 Web 服务器\n";
+        echo "   或编辑 php.ini 文件，取消注释: extension=bcmath\n\n";
+        
+        // 如果是关键扩展（如 bcmath），直接退出
+        $criticalExtensions = ['bcmath', 'curl', 'json', 'openssl'];
+        foreach ($missingExtensions as $ext) {
+            if (in_array($ext['name'], $criticalExtensions)) {
+                echo "⚠️  关键扩展缺失，程序无法正常运行，请先安装缺失的扩展！\n";
+                exit(1);
+            }
+        }
+    } else {
+        echo "✅ 所有必需的 PHP 扩展已安装\n";
     }
 }
 
