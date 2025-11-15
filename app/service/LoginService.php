@@ -8,6 +8,7 @@ use app\exception\MyBusinessException;
 use app\model\SystemConfig;
 use app\repository\AdminAuthRepository;
 use support\Request;
+use support\Log;
 
 class LoginService
 {
@@ -22,14 +23,28 @@ class LoginService
 
         // 获取客户端IP
         $clientIp = '0.0.0.0';
+        $remoteIp = '0.0.0.0';
         if ($request) {
+            // 获取真实IP（可能经过代理）
             $clientIp = $request->getRealIp();
+            // 获取直接连接IP（更准确）
+            $remoteIp = $request->getRemoteIp();
         }
 
         // 判断是否为商户（商户管理组 group_id = 4）
         $isMerchant = $admin->group_id == 4;
-        // 判断是否为本地IP（127.0.0.1）
-        $isLocalhost = $clientIp === '127.0.0.1';
+        // 判断是否为本地IP（支持多种格式：127.0.0.1, ::1, localhost, 0.0.0.0）
+        $isLocalhost = $this->isLocalIp($clientIp) || $this->isLocalIp($remoteIp);
+
+        // 调试日志：记录IP检测信息
+        Log::info('登录IP检测', [
+            'username' => $admin->username,
+            'client_ip' => $clientIp,
+            'remote_ip' => $remoteIp,
+            'is_merchant' => $isMerchant,
+            'is_localhost' => $isLocalhost,
+            'skip_google_auth' => $isMerchant || $isLocalhost
+        ]);
 
         // 商户或本地IP跳过谷歌验证码检查，其他用户需要验证
         if (!$isMerchant && !$isLocalhost) {
@@ -111,5 +126,36 @@ class LoginService
     {
         $googleAuthenticator = new \Google\Authenticator\GoogleAuthenticator();
         return $googleAuthenticator->checkCode($secret, $googleCode);
+    }
+
+    /**
+     * 判断是否为本地IP地址
+     * 
+     * @param string $ip IP地址
+     * @return bool
+     */
+    private function isLocalIp(string $ip): bool
+    {
+        if (empty($ip)) {
+            return false;
+        }
+
+        // 本地IPv4地址
+        $localIpv4 = ['127.0.0.1', 'localhost', '0.0.0.0'];
+        if (in_array($ip, $localIpv4, true)) {
+            return true;
+        }
+
+        // 本地IPv6地址
+        if ($ip === '::1' || $ip === '[::1]') {
+            return true;
+        }
+
+        // 检查是否为127.x.x.x网段
+        if (strpos($ip, '127.') === 0) {
+            return true;
+        }
+
+        return false;
     }
 }
