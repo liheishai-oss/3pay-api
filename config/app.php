@@ -25,6 +25,9 @@ return [
     'controller_suffix' => 'Controller',
     'controller_reuse' => false,
     
+    // 应用URL（从 .env 的 APP_URL 读取，用于生成支付链接和回调地址）
+    'url' => env('APP_URL', 'http://127.0.0.1:8787'),
+    
     // 商户对接配置
     'merchant_api' => [
         'callback_ips' => env('MERCHANT_CALLBACK_IPS', '34.92.49.193,34.150.65.167'), // 回调IP地址，多个用逗号分隔

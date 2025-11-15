@@ -215,13 +215,15 @@ class AlipayOAuthService
             ]);
             
             // 只使用.env中的证书配置
+            // 从 .env 直接读取 APP_URL
+            $appUrl = env('APP_URL', 'http://127.0.0.1:8787');
             $config = [
                 'appid' => $appId,
                 'AppPrivateKey' => $appPrivateKey,
                 'alipayCertPublicKey' => $alipayPublicCertPath,
                 'alipayRootCert' => $alipayRootCertPath,
                 'appCertPublicKey' => $appPublicCertPath,
-                'notify_url' => config('app.url') . '/api/v1/payment/notify/alipay',
+                'notify_url' => rtrim($appUrl, '/') . '/api/v1/payment/notify/alipay',
                 'sandbox' => false,
             ];
             

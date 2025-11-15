@@ -167,13 +167,15 @@ class AlipayComplaintService
             $alipayRootCertPath = self::getCertPath($cert->alipay_root_cert_path ?? $cert->root_cert_path, $cert->alipay_root_cert ?? '', 'alipay_root_cert');
             $appCertPath = self::getCertPath($cert->app_public_cert_path ?? $cert->app_cert_path, $cert->app_public_cert ?? '', 'app_public_cert');
             
+            // 从 .env 直接读取 APP_URL
+            $appUrl = env('APP_URL', 'http://127.0.0.1:8787');
             $paymentConfig = [
                 'appid' => $subject->alipay_app_id,
                 'AppPrivateKey' => $cert->app_private_key ?? $cert->private_key,
                 'alipayCertPublicKey' => $alipayCertPath,
                 'alipayRootCert' => $alipayRootCertPath,
                 'appCertPublicKey' => $appCertPath,
-                'notify_url' => config('app.url', '') . '/api/v1/payment/notify/alipay',
+                'notify_url' => rtrim($appUrl, '/') . '/api/v1/payment/notify/alipay',
                 'sandbox' => config('app.alipay_sandbox', false),
             ];
 
