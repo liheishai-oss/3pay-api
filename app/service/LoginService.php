@@ -21,32 +21,43 @@ class LoginService
         // 验证用户凭据
         $admin = $this->doginDataValidator->validate($param, false);
 
-        // 获取客户端IP
+        // 获取客户端IP和域名
         $clientIp = '0.0.0.0';
         $remoteIp = '0.0.0.0';
+        $host = '';
         if ($request) {
             // 获取真实IP（可能经过代理）
             $clientIp = $request->getRealIp();
             // 获取直接连接IP（更准确）
             $remoteIp = $request->getRemoteIp();
+            // 获取域名（不包含端口）
+            $host = $request->host(true) ?? '';
         }
 
         // 判断是否为商户（商户管理组 group_id = 4）
         $isMerchant = $admin->group_id == 4;
         // 判断是否为本地IP（支持多种格式：127.0.0.1, ::1, localhost, 0.0.0.0）
-        $isLocalhost = $this->isLocalIp($clientIp) || $this->isLocalIp($remoteIp);
+        $isLocalIp = $this->isLocalIp($clientIp) || $this->isLocalIp($remoteIp);
+        // 判断域名是否包含localhost
+        $isLocalhostDomain = !empty($host) && stripos($host, 'localhost') !== false;
 
-        // 调试日志：记录IP检测信息
+        // 商户、本地IP或localhost域名跳过谷歌验证码检查
+        $isLocalhost = $isLocalIp || $isLocalhostDomain;
+
+        // 调试日志：记录IP和域名检测信息
         Log::info('登录IP检测', [
             'username' => $admin->username,
             'client_ip' => $clientIp,
             'remote_ip' => $remoteIp,
+            'host' => $host,
             'is_merchant' => $isMerchant,
+            'is_local_ip' => $isLocalIp,
+            'is_localhost_domain' => $isLocalhostDomain,
             'is_localhost' => $isLocalhost,
             'skip_google_auth' => $isMerchant || $isLocalhost
         ]);
 
-        // 商户或本地IP跳过谷歌验证码检查，其他用户需要验证
+        // 商户或本地访问（IP或域名）跳过谷歌验证码检查，其他用户需要验证
         if (!$isMerchant && !$isLocalhost) {
             // 检查是否开启谷歌验证
             $config = ConfigHelper::getAll();
