@@ -95,6 +95,17 @@ class LoginService
         ];
 
         $token = $this->repository->persistLoginToken($userInfo);
+        
+        // 调试日志：检查商户登录时的token生成
+        if ($isMerchant) {
+            \support\Log::info('商户登录成功', [
+                'admin_id' => $admin->id,
+                'username' => $admin->username,
+                'group_id' => $admin->group_id,
+                'token' => $token,
+                'token_length' => strlen($token)
+            ]);
+        }
 
         return ['Authorization' => $token];
     }
