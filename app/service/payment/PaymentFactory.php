@@ -420,17 +420,27 @@ class PaymentFactory
     public static function handlePaymentNotify(string $productCode, array $notifyParams, int $agentId): array
     {
         try {
+            echo "  【6.1】开始处理支付通知\n";
+            echo "    - 产品代码: {$productCode}\n";
+            echo "    - 代理商ID: {$agentId}\n";
+            
             // 获取产品和支付类型信息
+            echo "  【6.2】查询产品信息\n";
             $product = Product::where('product_code', $productCode)
                 ->where('agent_id', $agentId)
                 ->with('paymentType')
                 ->first();
 
             if (!$product || !$product->paymentType) {
-                throw new Exception("产品或支付类型不存在");
+                $errorMsg = "产品或支付类型不存在";
+                echo "    - 错误: {$errorMsg}\n";
+                throw new Exception($errorMsg);
             }
+            echo "    - 产品ID: {$product->id}\n";
+            echo "    - 支付类型ID: {$product->payment_type_id}\n";
 
             // 获取支付配置
+            echo "  【6.3】查询支付主体\n";
             $subject = Subject::where('agent_id', $agentId)
                 ->where('status', Subject::STATUS_ENABLED)
                 ->whereHas('subjectPaymentTypes', function($query) use ($product) {
@@ -441,20 +451,38 @@ class PaymentFactory
                 ->first();
 
             if (!$subject) {
-                throw new Exception("支付主体不存在");
+                $errorMsg = "支付主体不存在";
+                echo "    - 错误: {$errorMsg}\n";
+                throw new Exception($errorMsg);
             }
+            echo "    - 主体ID: {$subject->id}\n";
+            echo "    - 主体名称: {$subject->company_name}\n";
+            echo "    - 支付宝APPID: {$subject->alipay_app_id}\n";
 
+            echo "  【6.4】获取支付配置\n";
             $paymentConfig = self::getPaymentConfig($subject, $product->paymentType);
+            echo "    - 配置获取成功\n";
 
             // 调用支付宝通知处理
+            echo "  【6.5】调用支付宝通知处理服务\n";
             $alipayService = new AlipayService();
-            return $alipayService->handlePaymentNotify($notifyParams, $paymentConfig);
+            $result = $alipayService->handlePaymentNotify($notifyParams, $paymentConfig);
+            echo "  【6.6】支付宝通知处理完成\n";
+            echo "    - 处理结果: " . ($result['success'] ? '成功' : '失败') . "\n";
+            if (!$result['success']) {
+                echo "    - 错误信息: " . ($result['message'] ?? '未知错误') . "\n";
+            }
+            return $result;
 
         } catch (Exception $e) {
+            echo "  【6.错误】支付通知处理异常\n";
+            echo "    - 错误信息: " . $e->getMessage() . "\n";
+            echo "    - 错误位置: " . $e->getFile() . ":" . $e->getLine() . "\n";
             Log::error("支付通知处理失败", [
                 'product_code' => $productCode,
                 'agent_id' => $agentId,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
             ]);
             throw $e;
         }
