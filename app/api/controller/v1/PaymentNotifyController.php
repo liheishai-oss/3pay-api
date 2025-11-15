@@ -173,13 +173,29 @@ class PaymentNotifyController
 
             // 通过支付工厂处理通知
             echo "【步骤6】验证签名和处理通知\n";
-            $result = PaymentFactory::handlePaymentNotify(
-                $product->product_code,
-                $params,
-                $order->agent_id
-            );
+            try {
+                $result = PaymentFactory::handlePaymentNotify(
+                    $product->product_code,
+                    $params,
+                    $order->agent_id
+                );
+                
+                echo "  - 处理结果返回\n";
+                echo "    - 结果类型: " . gettype($result) . "\n";
+                if (is_array($result)) {
+                    echo "    - success字段: " . (isset($result['success']) ? ($result['success'] ? 'true' : 'false') : '不存在') . "\n";
+                    echo "    - message字段: " . ($result['message'] ?? '不存在') . "\n";
+                } else {
+                    echo "    - 结果不是数组，值: " . var_export($result, true) . "\n";
+                }
+            } catch (\Exception $e) {
+                echo "  - 处理通知时发生异常\n";
+                echo "    - 异常信息: " . $e->getMessage() . "\n";
+                echo "    - 异常位置: " . $e->getFile() . ":" . $e->getLine() . "\n";
+                throw $e;
+            }
 
-            if ($result['success']) {
+            if (isset($result) && is_array($result) && !empty($result['success'])) {
                 echo "  - 签名验证成功\n";
                 echo "  - 通知处理成功\n";
                 \app\service\OrderLogService::log(
@@ -192,7 +208,15 @@ class PaymentNotifyController
                 );
                 // 更新订单状态（记录支付IP，从回调请求IP获取）
                 echo "【步骤7】更新订单状态\n";
-                $this->updateOrderStatus($order, $params, $request->getRealIp(), $request->header('user-agent', ''));
+                try {
+                    $this->updateOrderStatus($order, $params, $request->getRealIp(), $request->header('user-agent', ''));
+                    echo "  - 订单状态更新完成\n";
+                } catch (\Exception $e) {
+                    echo "  - 更新订单状态时发生异常\n";
+                    echo "    - 异常信息: " . $e->getMessage() . "\n";
+                    echo "    - 异常位置: " . $e->getFile() . ":" . $e->getLine() . "\n";
+                    throw $e;
+                }
                 Log::info('支付通知处理成功', [
                     'order_no' => $params['out_trade_no'],
                     'trade_no' => $params['trade_no'] ?? ''
@@ -204,18 +228,26 @@ class PaymentNotifyController
                 return 'success';
             } else {
                 echo "  - 签名验证失败或处理失败\n";
-                echo "  - 错误信息: " . ($result['message'] ?? '未知错误') . "\n";
+                $errorMsg = '未知错误';
+                if (isset($result) && is_array($result)) {
+                    $errorMsg = $result['message'] ?? '处理失败但未返回错误信息';
+                } elseif (isset($result)) {
+                    $errorMsg = '返回结果格式错误: ' . gettype($result);
+                } else {
+                    $errorMsg = '未返回结果';
+                }
+                echo "  - 错误信息: {$errorMsg}\n";
                 \app\service\OrderLogService::log(
                     $order->trace_id ?? '',
                     $order->platform_order_no,
                     $order->merchant_order_no,
                     '支付回调', 'WARN', '节点23-回调处理失败',
-                    ['action'=>'支付回调处理失败','message'=>$result['message']??''],
+                    ['action'=>'支付回调处理失败','message'=>$errorMsg],
                     $request->getRealIp(), $request->header('user-agent', '')
                 );
                 Log::warning('支付通知处理失败', [
                     'order_no' => $params['out_trade_no'],
-                    'message' => $result['message'] ?? ''
+                    'message' => $errorMsg
                 ]);
                 $duration = round((microtime(true) - $startTime) * 1000, 2);
                 echo "【失败】支付回调处理失败，耗时: {$duration}ms\n";
@@ -249,6 +281,9 @@ class PaymentNotifyController
     {
         try {
             echo "  【7.1】开始事务\n";
+            echo "    - 订单ID: {$order->id}\n";
+            echo "    - 订单号: {$order->platform_order_no}\n";
+            echo "    - 当前支付状态: {$order->pay_status}\n";
             Db::beginTransaction();
 
             // 更新订单状态
@@ -268,9 +303,16 @@ class PaymentNotifyController
                 'receipt_amount' => $notifyParams['receipt_amount'] ?? $order->order_amount,
             ];
             
+            echo "    - 更新数据准备完成\n";
+            echo "      - 支付状态: " . Order::PAY_STATUS_PAID . "\n";
+            echo "      - 通知状态: " . Order::NOTIFY_STATUS_PENDING . "\n";
+            echo "      - 支付时间: " . $updateData['pay_time'] . "\n";
+            echo "      - 支付宝交易号: " . ($updateData['alipay_order_no'] ?? '') . "\n";
+            
             // 更新购买者UID：只在有值时才更新，如果为空则保留原值（避免覆盖）
             if (!empty($notifyParams['buyer_id'])) {
                 $updateData['buyer_id'] = $notifyParams['buyer_id'];
+                echo "      - 购买者UID: {$notifyParams['buyer_id']}\n";
                 Log::info('支付回调：更新购买者UID', [
                     'order_id' => $order->id,
                     'platform_order_no' => $order->platform_order_no,
@@ -279,6 +321,7 @@ class PaymentNotifyController
                 ]);
             } elseif (empty($order->buyer_id)) {
                 // 如果订单中也没有buyer_id，记录警告
+                echo "      - 警告: buyer_id为空\n";
                 Log::warning('支付回调：buyer_id为空，且订单中也没有buyer_id', [
                     'order_id' => $order->id,
                     'platform_order_no' => $order->platform_order_no,
@@ -286,12 +329,17 @@ class PaymentNotifyController
                 ]);
             }
             
-            $order->update($updateData);
+            echo "  【7.3】执行订单更新\n";
+            $updateResult = $order->update($updateData);
+            echo "    - 更新结果: " . ($updateResult ? '成功' : '失败') . "\n";
+            
+            // 刷新订单数据以获取最新状态
+            $order->refresh();
             echo "  【7.3】订单状态已更新\n";
-            echo "    - 支付状态: 已支付\n";
-            echo "    - 支付宝交易号: " . ($updateData['alipay_order_no'] ?? '') . "\n";
-            echo "    - 支付时间: " . ($updateData['pay_time'] ?? '') . "\n";
-            echo "    - 支付IP: " . ($payIp ?: '未记录') . "\n";
+            echo "    - 支付状态: {$order->pay_status} (已更新为: " . Order::PAY_STATUS_PAID . ")\n";
+            echo "    - 支付宝交易号: " . ($order->alipay_order_no ?? '') . "\n";
+            echo "    - 支付时间: " . ($order->pay_time ?? '未设置') . "\n";
+            echo "    - 支付IP: " . ($order->pay_ip ?: '未记录') . "\n";
 
             // 发送商户通知（成功后回写 SUCCESS），自动回调不绕过熔断
             echo "  【7.4】发送商户通知\n";
