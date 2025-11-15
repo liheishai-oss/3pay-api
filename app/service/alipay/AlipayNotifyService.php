@@ -24,26 +24,26 @@ class AlipayNotifyService
     public static function handlePaymentNotify(array $params, array $paymentInfo): array
     {
         try {
-            echo "    【6.5.1】准备支付宝配置\n";
+            echo "    【5.4.1】准备支付宝配置\n";
             $config = AlipayConfig::getConfig($paymentInfo);
-            echo "    【6.5.2】配置准备完成\n";
+            echo "    【5.4.2】配置准备完成\n";
             
             // 验证签名
-            echo "    【6.5.3】开始验证签名\n";
+            echo "    【5.4.3】开始验证签名\n";
             $verifyResult = Factory::setOptions($config)
                 ->payment()
                 ->common()
                 ->verifyNotify($params);
             
             if (!$verifyResult) {
-                echo "    【6.5.3】签名验证失败\n";
+                echo "    【5.4.3】签名验证失败\n";
                 Log::warning("支付宝通知签名验证失败", ['params' => $params]);
                 throw new Exception("通知签名验证失败");
             }
-            echo "    【6.5.3】签名验证成功\n";
+            echo "    【5.4.3】签名验证成功\n";
             
             // 解析通知数据
-            echo "    【6.5.4】解析通知数据\n";
+            echo "    【5.4.4】解析通知数据\n";
             $notifyData = self::parseNotifyData($params);
             echo "      - 订单号: {$notifyData['out_trade_no']}\n";
             echo "      - 交易号: {$notifyData['trade_no']}\n";
@@ -51,7 +51,7 @@ class AlipayNotifyService
             echo "      - 交易金额: {$notifyData['total_amount']}\n";
             
             // 检查订单状态
-            echo "    【6.5.5】检查订单状态\n";
+            echo "    【5.4.5】检查订单状态\n";
             if ($notifyData['trade_status'] !== 'TRADE_SUCCESS' && 
                 $notifyData['trade_status'] !== 'TRADE_FINISHED') {
                 echo "      - 订单状态非成功: {$notifyData['trade_status']}\n";
@@ -64,7 +64,7 @@ class AlipayNotifyService
             echo "      - 订单状态检查通过\n";
             
             // 防重复处理
-            echo "    【6.5.6】检查是否重复处理\n";
+            echo "    【5.4.6】检查是否重复处理\n";
             $cacheKey = "alipay_notify:" . $notifyData['out_trade_no'] . ":" . $notifyData['trade_no'];
             if (Redis::get($cacheKey)) {
                 echo "      - 通知已处理过，跳过\n";
@@ -77,20 +77,48 @@ class AlipayNotifyService
             echo "      - 首次处理，继续\n";
             
             // 设置缓存防止重复处理（5分钟）
-            echo "    【6.5.7】设置防重复缓存\n";
+            echo "    【5.4.7】设置防重复缓存\n";
             Redis::setex($cacheKey, 300, 1);
             echo "      - 缓存设置成功\n";
             
-            // 触发订单支付成功事件
-            echo "    【6.5.8】触发支付成功事件\n";
-            Event::dispatch('order.payment.success', [
-                'order_number' => $notifyData['out_trade_no'],
-                'trade_no' => $notifyData['trade_no'],
-                'amount' => $notifyData['total_amount'],
-                'payment_method' => 'alipay',
-                'notify_data' => $notifyData
-            ]);
-            echo "      - 事件触发成功\n";
+            // 触发订单支付成功事件（使用 try-catch 确保即使事件失败也不影响后续处理）
+            echo "    【5.4.8】触发支付成功事件\n";
+            @flush();
+            @ob_flush();
+            try {
+                Event::dispatch('order.payment.success', [
+                    'order_number' => $notifyData['out_trade_no'],
+                    'trade_no' => $notifyData['trade_no'],
+                    'amount' => $notifyData['total_amount'],
+                    'payment_method' => 'alipay',
+                    'notify_data' => $notifyData
+                ]);
+                echo "      - 事件触发成功\n";
+                @flush();
+                @ob_flush();
+            } catch (\Exception $e) {
+                // 事件触发失败不影响订单状态更新，只记录日志
+                echo "      - 事件触发失败（不影响订单处理）: " . $e->getMessage() . "\n";
+                echo "      - 异常位置: " . $e->getFile() . ":" . $e->getLine() . "\n";
+                @flush();
+                @ob_flush();
+                Log::warning("支付成功事件触发失败", [
+                    'order_number' => $notifyData['out_trade_no'],
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+            } catch (\Throwable $e) {
+                // 捕获所有错误，包括致命错误
+                echo "      - 事件触发失败（致命错误）: " . $e->getMessage() . "\n";
+                echo "      - 异常位置: " . $e->getFile() . ":" . $e->getLine() . "\n";
+                @flush();
+                @ob_flush();
+                Log::error("支付成功事件触发失败（致命错误）", [
+                    'order_number' => $notifyData['out_trade_no'],
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+            }
             
             Log::info("支付宝支付通知处理成功", [
                 'order_number' => $notifyData['out_trade_no'],
@@ -98,7 +126,9 @@ class AlipayNotifyService
                 'amount' => $notifyData['total_amount']
             ]);
             
-            echo "    【6.5.9】通知处理完成\n";
+            echo "    【5.4.9】通知处理完成\n";
+            @flush();
+            @ob_flush();
             return ['success' => true, 'message' => '通知处理成功'];
             
         } catch (Exception $e) {
