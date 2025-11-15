@@ -57,9 +57,9 @@ class Factory
 
     public static function setOptions($config)
     {
-        if (!(self::$instance instanceof self)) {
+//        if (!(self::$instance instanceof self)) {
             self::$instance = new self($config);
-        }
+//        }
         return self::$instance;
     }
 
