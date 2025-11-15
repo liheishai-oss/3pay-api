@@ -15,6 +15,41 @@ use Webman\Event\Event;
 class AlipayPaymentService
 {
     /**
+     * 格式化并验证 time_expire 参数
+     * @param string|null $expireTime 过期时间（格式：Y-m-d H:i:s）
+     * @return string|null 格式化后的时间（格式：yyyy-MM-dd HH:mm:ss）或 null
+     */
+    private static function formatTimeExpire(?string $expireTime): ?string
+    {
+        if (empty($expireTime)) {
+            return null;
+        }
+        
+        // 尝试解析时间
+        $timestamp = strtotime($expireTime);
+        if ($timestamp === false) {
+            Log::warning("订单过期时间格式错误", [
+                'expire_time' => $expireTime
+            ]);
+            return null;
+        }
+        
+        // 检查是否为未来时间
+        if ($timestamp <= time()) {
+            Log::warning("订单过期时间已过期", [
+                'expire_time' => $expireTime,
+                'current_time' => date('Y-m-d H:i:s')
+            ]);
+            return null;
+        }
+        
+        // 格式化为支付宝要求的格式：yyyy-MM-dd HH:mm:ss
+        $formatted = date('Y-m-d H:i:s', $timestamp);
+        
+        return $formatted;
+    }
+    
+    /**
      * WAP支付
      * @param array $orderInfo 订单信息
      * @param array $paymentInfo 支付配置信息
@@ -26,11 +61,19 @@ class AlipayPaymentService
         try {
             $config = AlipayConfig::getConfig($paymentInfo);
             
+            // 格式化并验证 time_expire 参数
+            $timeExpire = self::formatTimeExpire($orderInfo['order_expiry_time'] ?? null);
+            
             $wapPayment = Factory::setOptions($config)
                 ->payment()
-                ->wap()
-                ->optional("time_expire", $orderInfo['order_expiry_time'] ?? '')
-                ->optional("seller_id", $orderInfo['pid'] ?? '')
+                ->wap();
+            
+            // 只在有有效时间时才添加 time_expire 参数
+            if ($timeExpire !== null) {
+                $wapPayment->optional("time_expire", $timeExpire);
+            }
+            
+            $wapPayment->optional("seller_id", $orderInfo['pid'] ?? '')
                 ->optional("quit_url", $orderInfo['quit_url'] ?? '');
             
             // 如果有buyer_id，添加到可选参数（用于指定支付账号）
@@ -80,11 +123,19 @@ class AlipayPaymentService
         try {
             $config = AlipayConfig::getConfig($paymentInfo);
             
-            $result = Factory::setOptions($config)
+            // 格式化并验证 time_expire 参数
+            $timeExpire = self::formatTimeExpire($orderInfo['order_expiry_time'] ?? null);
+            
+            $appPayment = Factory::setOptions($config)
                 ->payment()
-                ->app()
-                ->optional("time_expire", $orderInfo['order_expiry_time'] ?? '')
-                ->optional("seller_id", $orderInfo['pid'] ?? '')
+                ->app();
+            
+            // 只在有有效时间时才添加 time_expire 参数
+            if ($timeExpire !== null) {
+                $appPayment->optional("time_expire", $timeExpire);
+            }
+            
+            $result = $appPayment->optional("seller_id", $orderInfo['pid'] ?? '')
                 ->pay(
                     $orderInfo['remark'] ?? $orderInfo['product_title'],
                     $orderInfo['payment_order_number'],
@@ -119,11 +170,19 @@ class AlipayPaymentService
         try {
             $config = AlipayConfig::getConfig($paymentInfo);
             
-            $result = Factory::setOptions($config)
+            // 格式化并验证 time_expire 参数
+            $timeExpire = self::formatTimeExpire($orderInfo['order_expiry_time'] ?? null);
+            
+            $pagePayment = Factory::setOptions($config)
                 ->payment()
-                ->page()
-                ->optional("time_expire", $orderInfo['order_expiry_time'] ?? '')
-                ->optional("seller_id", $orderInfo['pid'] ?? '')
+                ->page();
+            
+            // 只在有有效时间时才添加 time_expire 参数
+            if ($timeExpire !== null) {
+                $pagePayment->optional("time_expire", $timeExpire);
+            }
+            
+            $result = $pagePayment->optional("seller_id", $orderInfo['pid'] ?? '')
                 ->pay(
                     $orderInfo['remark'] ?? $orderInfo['product_title'],
                     $orderInfo['payment_order_number'],
@@ -158,12 +217,29 @@ class AlipayPaymentService
         try {
             $config = AlipayConfig::getConfig($paymentInfo);
             
+            // 格式化并验证 time_expire 参数
+            $timeExpire = self::formatTimeExpire($orderInfo['order_expiry_time'] ?? null);
+            
             // 使用当面付预创建API生成二维码（PRECREATE）
-            $result = Factory::setOptions($config)
+            $faceToFacePayment = Factory::setOptions($config)
                 ->payment()
-                ->faceToFace()  // 当面付API
-                ->optional("time_expire", $orderInfo['order_expiry_time'] ?? '')
-                ->optional("seller_id", $orderInfo['pid'] ?? '')
+                ->faceToFace();  // 当面付API
+            
+            // 只在有有效时间时才添加 time_expire 参数
+            if ($timeExpire !== null) {
+                $faceToFacePayment->optional("time_expire", $timeExpire);
+                Log::info("扫码支付设置超时时间", [
+                    'order_number' => $orderInfo['payment_order_number'],
+                    'time_expire' => $timeExpire
+                ]);
+            } else {
+                Log::warning("扫码支付未设置超时时间", [
+                    'order_number' => $orderInfo['payment_order_number'],
+                    'original_expire_time' => $orderInfo['order_expiry_time'] ?? 'empty'
+                ]);
+            }
+            
+            $result = $faceToFacePayment->optional("seller_id", $orderInfo['pid'] ?? '')
                 ->precreate(  // 预创建（生成二维码）
                     $orderInfo['remark'] ?? $orderInfo['product_title'],
                     $orderInfo['payment_order_number'],
@@ -230,11 +306,19 @@ class AlipayPaymentService
         try {
             $config = AlipayConfig::getConfig($paymentInfo);
             
-            $result = Factory::setOptions($config)
+            // 格式化并验证 time_expire 参数
+            $timeExpire = self::formatTimeExpire($orderInfo['order_expiry_time'] ?? null);
+            
+            $faceToFacePayment = Factory::setOptions($config)
                 ->payment()
-                ->faceToFace()
-                ->optional("time_expire", $orderInfo['order_expiry_time'] ?? '')
-                ->optional("seller_id", $orderInfo['pid'] ?? '')
+                ->faceToFace();
+            
+            // 只在有有效时间时才添加 time_expire 参数
+            if ($timeExpire !== null) {
+                $faceToFacePayment->optional("time_expire", $timeExpire);
+            }
+            
+            $result = $faceToFacePayment->optional("seller_id", $orderInfo['pid'] ?? '')
                 ->pay(
                     $orderInfo['remark'] ?? $orderInfo['product_title'],
                     $orderInfo['payment_order_number'],
@@ -271,11 +355,19 @@ class AlipayPaymentService
         try {
             $config = AlipayConfig::getConfig($paymentInfo);
             
-            $result = Factory::setOptions($config)
+            // 格式化并验证 time_expire 参数
+            $timeExpire = self::formatTimeExpire($orderInfo['order_expiry_time'] ?? null);
+            
+            $preAuthPayment = Factory::setOptions($config)
                 ->payment()
-                ->preAuth()
-                ->optional("time_expire", $orderInfo['order_expiry_time'] ?? '')
-                ->optional("seller_id", $orderInfo['pid'] ?? '')
+                ->preAuth();
+            
+            // 只在有有效时间时才添加 time_expire 参数
+            if ($timeExpire !== null) {
+                $preAuthPayment->optional("time_expire", $timeExpire);
+            }
+            
+            $result = $preAuthPayment->optional("seller_id", $orderInfo['pid'] ?? '')
                 ->pay(
                     $orderInfo['remark'] ?? $orderInfo['product_title'],
                     $orderInfo['payment_order_number'],

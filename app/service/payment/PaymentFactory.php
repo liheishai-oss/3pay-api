@@ -71,6 +71,18 @@ class PaymentFactory
             if (!$subject) {
                 throw new Exception("暂无可用支付主体");
             }
+            
+            // 验证选择的支付主体必须是启用状态（双重检查，确保安全）
+            if ($subject->status !== Subject::STATUS_ENABLED) {
+                Log::error('选择的支付主体未启用', [
+                    'subject_id' => $subject->id,
+                    'subject_status' => $subject->status,
+                    'expected_status' => Subject::STATUS_ENABLED,
+                    'agent_id' => $agentId,
+                    'product_code' => $productCode
+                ]);
+                throw new Exception("选择的支付主体未启用，无法创建支付");
+            }
 
             // 4. 获取支付配置
             $paymentConfig = self::getPaymentConfig($subject, $paymentType);
