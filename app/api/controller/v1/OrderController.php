@@ -359,6 +359,37 @@ class OrderController
                 return $this->error($errorMessage);
             }
             
+            // 验证选择的支付主体必须是启用状态（双重检查，确保安全）
+            if ($subject->status !== Subject::STATUS_ENABLED) {
+                Log::error('选择的支付主体未启用', [
+                    'subject_id' => $subject->id,
+                    'subject_status' => $subject->status,
+                    'expected_status' => Subject::STATUS_ENABLED,
+                    'agent_id' => $merchant->agent_id,
+                    'product_code' => $product->product_code
+                ]);
+                
+                OrderLogService::log(
+                    $traceId,
+                    $platformOrderNo,
+                    $params['merchant_order_no'],
+                    '创建',
+                    'ERROR',
+                    '节点4-支付主体状态验证',
+                    [
+                        'subject_id' => $subject->id,
+                        'subject_status' => $subject->status,
+                        'expected_status' => Subject::STATUS_ENABLED,
+                        'validation_result' => '失败',
+                        'error_reason' => '选择的支付主体未启用'
+                    ],
+                    $request->getRealIp(),
+                    $request->header('user-agent', '')
+                );
+                
+                return $this->error('选择的支付主体未启用，无法创建订单');
+            }
+            
             // 节点4：支付主体选择（成功）
             OrderLogService::log(
                 $traceId,
@@ -377,10 +408,12 @@ class OrderController
                     'selected_subject_id' => $subject->id,
                     'subject_info' => [
                         'company_name' => $subject->company_name,
-                        'alipay_app_id' => $subject->alipay_app_id ?? ''
+                        'alipay_app_id' => $subject->alipay_app_id ?? '',
+                        'status' => $subject->status,
+                        'status_text' => $subject->status === Subject::STATUS_ENABLED ? '已启用' : '已禁用'
                     ],
                     'selection_result' => '成功',
-                    'check_conditions' => '同时满足产品绑定和支付类型绑定'
+                    'check_conditions' => '同时满足产品绑定和支付类型绑定，且支付主体状态为启用'
                 ],
                 $request->getRealIp(),
                 $request->header('user-agent', '')

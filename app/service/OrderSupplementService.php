@@ -23,11 +23,11 @@ class OrderSupplementService
      * 
      * @param Order $order 订单对象
      * @param string $operatorIp 操作者IP（用于日志）
-     * @param string $operatorAgent 操作者User-Agent（用于日志）
+     * @param string|null $operatorAgent 操作者User-Agent（用于日志）
      * @param bool $isManual 是否手动触发
      * @return array ['success' => bool, 'message' => string, 'data' => array]
      */
-    public static function supplementOrder(Order $order, string $operatorIp = 'SYSTEM', string $operatorAgent = null, bool $isManual = false): array
+    public static function supplementOrder(Order $order, string $operatorIp = 'SYSTEM', ?string $operatorAgent = null, bool $isManual = false): array
     {
         try {
             // 1. 检查订单状态（手动补单时跳过此检查，直接查询支付宝状态）
@@ -162,7 +162,7 @@ class OrderSupplementService
                     'operator_ip' => $operatorIp
                 ],
                 $operatorIp,
-                $operatorAgent
+                $operatorAgent ?? ''
             );
             
             $alipayOrder = null;
@@ -190,7 +190,7 @@ class OrderSupplementService
                         'operator_ip' => $operatorIp
                     ],
                     $operatorIp,
-                    $operatorAgent
+                    $operatorAgent ?? ''
                 );
             } catch (\Exception $e) {
                 $lastError = $e;
@@ -322,7 +322,7 @@ class OrderSupplementService
                             'operator_ip' => $operatorIp
                         ],
                         $operatorIp,
-                        $operatorAgent
+                        $operatorAgent ?? ''
                     );
 
                     // 构建更详细的错误提示
@@ -389,7 +389,7 @@ class OrderSupplementService
                                 'operator_ip' => $operatorIp
                             ],
                             $operatorIp,
-                            $operatorAgent
+                            $operatorAgent ?? ''
                         );
                         
                         return [
@@ -427,7 +427,7 @@ class OrderSupplementService
                         'operator_ip' => $operatorIp
                     ],
                     $operatorIp,
-                    $operatorAgent
+                    $operatorAgent ?? ''
                 );
 
                 return [
@@ -465,7 +465,7 @@ class OrderSupplementService
                         'operator_ip' => $operatorIp
                     ],
                     $operatorIp,
-                    $operatorAgent
+                    $operatorAgent ?? ''
                 );
                 
                 $order->pay_status = Order::PAY_STATUS_PAID;
@@ -577,7 +577,7 @@ class OrderSupplementService
                         'operator_ip' => $operatorIp
                     ],
                     $operatorIp,
-                    $operatorAgent
+                    $operatorAgent ?? ''
                 );
 
                 Db::commit();
@@ -619,7 +619,7 @@ class OrderSupplementService
                                 'operator_ip' => $operatorIp
                             ],
                             $operatorIp,
-                            $operatorAgent
+                            $operatorAgent ?? ''
                         );
                     } catch (\Exception $e) {
                         Log::error('补单后回调失败', [
@@ -670,7 +670,7 @@ class OrderSupplementService
                                 'operator_ip' => $operatorIp
                             ],
                             $operatorIp,
-                            $operatorAgent
+                            $operatorAgent ?? ''
                         );
                         
                         $royaltyResult = [
