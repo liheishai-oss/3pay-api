@@ -73,15 +73,38 @@ class MerchantNotifyService
                 'merchant_order_no' => $order->merchant_order_no,
                 'amount' => $order->order_amount,
                 'pay_status' => Order::PAY_STATUS_PAID,
-                'trade_no' => $notifyParams['trade_no'] ?? ($order->trade_no ?? ''),
+                'trade_no' => $notifyParams['trade_no'] ?? ($order->trade_no ?? ($order->alipay_order_no ?? '')),
                 'paid_at' => $order->pay_time,
                 'timestamp' => time(),
             ];
             $notifyData['sign'] = SignatureHelper::generate($notifyData, $order->merchant->api_secret, 'standard', 'md5');
 
+            // 记录发送的通知数据，方便调试（使用notify日志通道）
+            Log::channel('notify')->info('准备发送商户通知', [
+                'order_id' => $order->id,
+                'platform_order_no' => $order->platform_order_no,
+                'merchant_order_no' => $order->merchant_order_no,
+                'notify_url' => $order->notify_url,
+                'notify_data' => $notifyData,
+                'order_expire_time' => $order->expire_time,
+                'order_pay_status' => $order->pay_status,
+                'order_pay_time' => $order->pay_time
+            ]);
+
             // 标记开始发送：保持 notify_status = FAILED/PENDING 到真正成功
             try {
-                self::sendHttpNotify($order->notify_url, $notifyData);
+                // 发送前记录请求信息（使用notify日志通道）
+                Log::channel('notify')->info('商户回调请求', [
+                    'order_id' => $order->id,
+                    'platform_order_no' => $order->platform_order_no,
+                    'merchant_order_no' => $order->merchant_order_no,
+                    'merchant_id' => $order->merchant_id,
+                    'notify_url' => $order->notify_url,
+                    'notify_data' => $notifyData,
+                    'request_time' => date('Y-m-d H:i:s')
+                ]);
+                
+                $response = self::sendHttpNotify($order->notify_url, $notifyData);
 
                 // 成功：回写 SUCCESS
                 $order->notify_status = Order::NOTIFY_STATUS_SUCCESS;
@@ -98,9 +121,17 @@ class MerchantNotifyService
                     // 忽略缓存异常
                 }
 
-                Log::info('商户通知发送成功', [
+                // 记录成功回调的详细信息（使用notify日志通道）
+                Log::channel('notify')->info('商户回调成功', [
                     'order_id' => $order->id,
-                    'notify_url' => $order->notify_url
+                    'platform_order_no' => $order->platform_order_no,
+                    'merchant_order_no' => $order->merchant_order_no,
+                    'merchant_id' => $order->merchant_id,
+                    'notify_url' => $order->notify_url,
+                    'notify_data' => $notifyData,
+                    'response' => $response,
+                    'notify_times' => $order->notify_times,
+                    'notify_time' => $order->notify_time
                 ]);
 
                 return ['success' => true, 'message' => 'SUCCESS'];
@@ -112,7 +143,7 @@ class MerchantNotifyService
                 $order->notify_time = date('Y-m-d H:i:s');
                 $order->save();
 
-                Log::error('商户通知发送失败', [
+                Log::channel('notify')->error('商户通知发送失败', [
                     'order_id' => $order->id,
                     'notify_url' => $order->notify_url,
                     'error' => $e->getMessage()
@@ -208,7 +239,14 @@ class MerchantNotifyService
 
     // 签名统一由 SignatureHelper 生成
 
-    private static function sendHttpNotify(string $url, array $data): void
+    /**
+     * 发送HTTP通知
+     * @param string $url 通知URL
+     * @param array $data 通知数据
+     * @return string 商户响应内容
+     * @throws \Exception
+     */
+    private static function sendHttpNotify(string $url, array $data): string
     {
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
@@ -230,11 +268,30 @@ class MerchantNotifyService
             throw new \Exception("CURL错误: {$error}");
         }
         if ($httpCode !== 200) {
-            throw new \Exception("HTTP状态码错误: {$httpCode}");
+            // 记录详细的HTTP错误信息，包括响应内容
+            $responsePreview = mb_substr((string)$response, 0, 200);
+            Log::channel('notify')->warning('商户通知HTTP状态码错误', [
+                'url' => $url,
+                'http_code' => $httpCode,
+                'response_preview' => $responsePreview,
+                'notify_data_keys' => array_keys($data)
+            ]);
+            throw new \Exception("HTTP状态码错误: {$httpCode}" . ($responsePreview ? "，响应: {$responsePreview}" : ''));
         }
         if (strtoupper(trim((string)$response)) !== 'SUCCESS') {
+            // 记录商户响应的详细信息，方便调试
+            Log::channel('notify')->warning('商户通知响应非SUCCESS', [
+                'url' => $url,
+                'response' => $response,
+                'notify_data' => $data,
+                'platform_order_no' => $data['platform_order_no'] ?? '',
+                'merchant_order_no' => $data['merchant_order_no'] ?? ''
+            ]);
             throw new \Exception("商户响应错误: {$response}");
         }
+        
+        // 返回响应内容，供调用方记录日志
+        return (string)$response;
     }
 }
 

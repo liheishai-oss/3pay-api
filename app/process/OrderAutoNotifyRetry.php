@@ -73,7 +73,7 @@ class OrderAutoNotifyRetry
 
                     if ($result['success']) {
                         $successCount++;
-                        Log::info('自动补发回调成功', [
+                        Log::channel('notify')->info('自动补发回调成功', [
                             'order_id' => $order->id,
                             'platform_order_no' => $order->platform_order_no,
                             'notify_url' => $order->notify_url
@@ -93,7 +93,7 @@ class OrderAutoNotifyRetry
                                 'operator_ip' => 'SYSTEM'
                             ],
                             'SYSTEM',
-                            null
+                            ''
                         );
                     } else {
                         // 判断是否需要跳过（熔断、超限等）
@@ -129,7 +129,7 @@ class OrderAutoNotifyRetry
                                     'operator_ip' => 'SYSTEM'
                                 ],
                                 'SYSTEM',
-                                null
+                                ''
                             );
                         }
                     }

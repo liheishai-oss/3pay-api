@@ -109,7 +109,7 @@ class OrderUnopenedClose
                             'reason' => '超过1小时未拉起'
                         ],
                         'SYSTEM',
-                        null
+                        ''
                     );
                 } else {
                     $skippedCount++;
@@ -121,14 +121,14 @@ class OrderUnopenedClose
             }
 
             if ($closedCount > 0) {
-                Log::info('未拉起订单自动关闭任务执行', [
+                Log::channel('order')->info('未拉起订单自动关闭任务执行', [
                     'closed_count' => $closedCount,
                     'skipped_count' => $skippedCount,
                     'time' => $now,
                 ]);
             }
         } catch (\Throwable $e) {
-            Log::error('未拉起订单自动关闭任务失败', [
+            Log::channel('order')->error('未拉起订单自动关闭任务失败', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);

@@ -166,8 +166,17 @@ class Order extends Model
         }
 
         // 检查主体是否配置了分账
+        // 如果 subject 不是对象，尝试重新加载
         if (!$this->subject) {
             return false;
+        }
+
+        // 如果 subject 是字符串（可能是被 toArray() 转换过），尝试重新加载
+        if (!is_object($this->subject)) {
+            $this->load('subject');
+            if (!$this->subject || !is_object($this->subject)) {
+                return false;
+            }
         }
 
         // 分账方式不为"不分账"

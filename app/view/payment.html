@@ -323,6 +323,14 @@
             <div class="qr-code-text">请使用支付宝扫描二维码完成支付</div>
         </div>
         <?php endif; ?>
+        
+        <button id="payButton" class="pay-button" onclick="submitPayment()">
+            <?php if ($isMobile): ?>
+                📱 立即支付
+            <?php else: ?>
+                💳 立即支付
+            <?php endif; ?>
+        </button>
             
             <!-- 支付注意事项 -->
         <div class="payment-notice" style="margin-top: 20px; margin-bottom: 30px;">
@@ -332,14 +340,6 @@
                 <div class="payment-notice-item payment-notice-red">4、部分不沟通，直接发起投诉的，将永久封禁账户！</div>
                 <div class="payment-notice-footer">注意:支付保赔付，安全保障，感谢您的参与!!</div>
             </div>
-        
-        <button id="payButton" class="pay-button" onclick="submitPayment()">
-            <?php if ($isMobile): ?>
-                📱 立即支付
-            <?php else: ?>
-                💳 立即支付
-            <?php endif; ?>
-        </button>
         
         <!-- 🔍 调试按钮：查看协议地址（已注释，需要调试时可取消注释） -->
         <!--
@@ -747,7 +747,7 @@
                         // console.log("  方案3: alipay://platformapi/startapp?appId=20000067&url=...");
                         // console.log("  方案4: alipays://platformapi/startapp?url=...");
                         // console.log("");
-                        alert(10)
+                        // console.log("🚀 准备跳转到支付宝APP");
                         if (TEST_MODE === 1) {
                             // console.log("步骤1️⃣：目标URL");
                             // console.log("  🌐 直接打开:", oauthBaseUrl);
@@ -805,7 +805,6 @@
                     // 获取支付表单
                     const form = document.forms["alipaysubmit"];
                     if (!form) {
-                        alert(15)
                         console.error("未找到支付表单");
                         alert("支付表单不存在，请重新加载页面");
                         payButton.style.display = "block";
@@ -818,7 +817,6 @@
                     // console.log("支付表单URL:", actionUrl);
                     
                     if (actionUrl) {
-                        alert(16)
                         // 使用支付宝协议调起APP并在APP内打开支付页面
                         const alipayScheme = 'alipays://platformapi/startapp?appId=20000067&url=' + encodeURIComponent(actionUrl);
                         

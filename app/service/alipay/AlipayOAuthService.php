@@ -385,18 +385,10 @@ class AlipayOAuthService
             ]);
             
             try {
-                Log::info("[OAuth-步骤5] 开始调用Factory.setOptions");
                 $factory = Factory::setOptions($config);
-                Log::info("[OAuth-步骤6] Factory.setOptions完成，调用base()");
                 $base = $factory->base();
-                Log::info("[OAuth-步骤7] base()完成，调用oauth()");
                 $oauth = $base->oauth();
-                Log::info("[OAuth-步骤8] oauth()完成，调用getToken()");
                 $result = $oauth->getToken($authCode);
-                Log::info("[OAuth-步骤9] getToken()调用完成", [
-                    'result_type' => get_class($result),
-                    'result_properties' => array_keys(get_object_vars($result))
-                ]);
             } catch (\Exception $e) {
                 $errorMessage = $e->getMessage();
                 $errorCode = $e->getCode();
