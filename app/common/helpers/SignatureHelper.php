@@ -119,7 +119,6 @@ class SignatureHelper
             }
             $stringToSign .= $secretKey;
         }
-        
         return $stringToSign;
     }
     
