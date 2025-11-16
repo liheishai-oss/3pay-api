@@ -73,11 +73,23 @@ class MerchantNotifyService
                 'merchant_order_no' => $order->merchant_order_no,
                 'amount' => $order->order_amount,
                 'pay_status' => Order::PAY_STATUS_PAID,
-                'trade_no' => $notifyParams['trade_no'] ?? ($order->trade_no ?? ''),
+                'trade_no' => $notifyParams['trade_no'] ?? ($order->trade_no ?? ($order->alipay_order_no ?? '')),
                 'paid_at' => $order->pay_time,
                 'timestamp' => time(),
             ];
             $notifyData['sign'] = SignatureHelper::generate($notifyData, $order->merchant->api_secret, 'standard', 'md5');
+
+            // 记录发送的通知数据，方便调试
+            Log::info('准备发送商户通知', [
+                'order_id' => $order->id,
+                'platform_order_no' => $order->platform_order_no,
+                'merchant_order_no' => $order->merchant_order_no,
+                'notify_url' => $order->notify_url,
+                'notify_data' => $notifyData,
+                'order_expire_time' => $order->expire_time,
+                'order_pay_status' => $order->pay_status,
+                'order_pay_time' => $order->pay_time
+            ]);
 
             // 标记开始发送：保持 notify_status = FAILED/PENDING 到真正成功
             try {
@@ -230,9 +242,25 @@ class MerchantNotifyService
             throw new \Exception("CURL错误: {$error}");
         }
         if ($httpCode !== 200) {
-            throw new \Exception("HTTP状态码错误: {$httpCode}");
+            // 记录详细的HTTP错误信息，包括响应内容
+            $responsePreview = mb_substr((string)$response, 0, 200);
+            Log::warning('商户通知HTTP状态码错误', [
+                'url' => $url,
+                'http_code' => $httpCode,
+                'response_preview' => $responsePreview,
+                'notify_data_keys' => array_keys($data)
+            ]);
+            throw new \Exception("HTTP状态码错误: {$httpCode}" . ($responsePreview ? "，响应: {$responsePreview}" : ''));
         }
         if (strtoupper(trim((string)$response)) !== 'SUCCESS') {
+            // 记录商户响应的详细信息，方便调试
+            Log::warning('商户通知响应非SUCCESS', [
+                'url' => $url,
+                'response' => $response,
+                'notify_data' => $data,
+                'platform_order_no' => $data['platform_order_no'] ?? '',
+                'merchant_order_no' => $data['merchant_order_no'] ?? ''
+            ]);
             throw new \Exception("商户响应错误: {$response}");
         }
     }
