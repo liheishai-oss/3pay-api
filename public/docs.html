@@ -447,19 +447,130 @@ api_secret: xyz789 (不参与参数排序，最后添加)</code></pre>
         <h3>通知说明</h3>
         <p>订单支付成功后，系统会向商户配置的<code>notify_url</code>发送POST请求通知。</p>
 
+        <h3>回调参数</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>参数名</th>
+                    <th>类型</th>
+                    <th>说明</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>platform_order_no</td>
+                    <td>string</td>
+                    <td>平台订单号</td>
+                </tr>
+                <tr>
+                    <td>merchant_order_no</td>
+                    <td>string</td>
+                    <td>商户订单号</td>
+                </tr>
+                <tr>
+                    <td>amount</td>
+                    <td>decimal</td>
+                    <td>订单金额</td>
+                </tr>
+                <tr>
+                    <td>pay_status</td>
+                    <td>int</td>
+                    <td>支付状态（1=已支付）</td>
+                </tr>
+                <tr>
+                    <td>trade_no</td>
+                    <td>string</td>
+                    <td>支付宝订单号</td>
+                </tr>
+                <tr>
+                    <td>paid_at</td>
+                    <td>string</td>
+                    <td>支付时间（格式：Y-m-d H:i:s）</td>
+                </tr>
+                <tr>
+                    <td>timestamp</td>
+                    <td>int</td>
+                    <td>时间戳</td>
+                </tr>
+                <tr>
+                    <td>sign</td>
+                    <td>string</td>
+                    <td>签名</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>回调数据示例</h3>
+        <pre><code>{
+    "platform_order_no": "BY220251116123810EA78A2EC",
+    "merchant_order_no": "M1763267881",
+    "amount": 1,
+    "pay_status": 1,
+    "trade_no": "2025111622001454171415453410",
+    "paid_at": "2025-11-16 12:39:00",
+    "timestamp": 1763267940,
+    "sign": "CC32E9B966D2728FBC3D40D4EEC625BB"
+}</code></pre>
+
+        <h3>签名前字符串示例</h3>
+        <p>签名前的字符串格式（按参数名ASCII码升序排列，最后加上<code>key=api_secret</code>）：</p>
+        <pre><code>amount=1&merchant_order_no=M1763267881&paid_at=2025-11-16 12:39:00&pay_status=1&platform_order_no=BY220251116123810EA78A2EC&timestamp=1763267940&trade_no=2025111622001454171415453410&key=b618e5f95fb4ea279378582577459a172e6a457eda3c4625f71f863552aeb753</code></pre>
+        <p>签名生成步骤：</p>
+        <ol>
+            <li>移除<code>sign</code>参数</li>
+            <li>按键名ASCII码升序排序</li>
+            <li>按照<code>key=value&</code>格式拼接（空值和null值跳过）</li>
+            <li>在末尾添加<code>key=api_secret</code></li>
+            <li>对拼接后的字符串进行MD5加密并转大写</li>
+        </ol>
+
         <h3>回调说明</h3>
         <ul>
             <li>支付成功后系统会主动回调商户的notify_url</li>
             <li>回调参数包含订单状态和签名信息</li>
-            <li>商户收到回调后需要返回"success"字符串确认（不区分大小写）</li>
-            <li>HTTP状态码必须返回200，响应内容必须为"SUCCESS"</li>
+            <li>商户收到回调后需要返回字符串"success"确认（<strong>不区分大小写</strong>，可以是"success"、"SUCCESS"、"Success"等）</li>
+            <li>HTTP状态码必须返回200</li>
+            <li>响应内容不区分大小写，只要转大写后为"SUCCESS"即可</li>
         </ul>
+
+        <div class="note">
+            <h3>回调响应示例</h3>
+            <p>以下响应都是有效的（不区分大小写）：</p>
+            <ul>
+                <li><code>success</code></li>
+                <li><code>SUCCESS</code></li>
+                <li><code>Success</code></li>
+                <li><code>SuCcEsS</code></li>
+            </ul>
+        </div>
+
+        <h3>回调处理示例代码</h3>
+        <pre><code>// 接收通知参数
+$params = $_POST;
+
+// 验证签名
+$sign = $params['sign'];
+unset($params['sign']);
+
+$expectedSign = generateSign($params, 'YOUR_API_SECRET');
+
+if (strtoupper($sign) !== strtoupper($expectedSign)) {
+    exit('签名验证失败');
+}
+
+// 处理业务逻辑
+// 1. 查询订单是否已处理（使用platform_order_no或merchant_order_no）
+// 2. 更新订单状态
+// 3. 发货/开通服务等
+
+// 返回成功（不区分大小写）
+echo 'success';</code></pre>
 
         <div class="danger">
             <h3>熔断机制</h3>
             <ul>
                 <li>连续超时5次：如果商户回调接口连续5次超时（超过10秒未响应），系统将触发熔断，暂停自动回调5分钟</li>
-                <li>连续非期望响应5次：如果商户回调接口连续5次返回非200状态码或响应内容不是"SUCCESS"，系统将触发熔断，暂停自动回调5分钟</li>
+                <li>连续非期望响应5次：如果商户回调接口连续5次返回非200状态码或响应内容转大写后不是"SUCCESS"，系统将触发熔断，暂停自动回调5分钟</li>
                 <li>熔断恢复：回调成功后自动恢复，或等待5分钟后自动恢复</li>
             </ul>
         </div>
