@@ -75,13 +75,13 @@ return [
         'reloadable' => true,
         'count' => 1,
     ],
-
-    // 订单自动补单任务（每5分钟扫描一次待支付订单，查询支付宝状态并补单）
-    'order-auto-supplement' => [
-        'handler' => app\process\OrderAutoSupplement::class,
-        'reloadable' => true,
-        'count' => 1,
-    ],
+//
+//    // 订单自动补单任务（每5分钟扫描一次待支付订单，查询支付宝状态并补单）
+//    'order-auto-supplement' => [
+//        'handler' => app\process\OrderAutoSupplement::class,
+//        'reloadable' => true,
+//        'count' => 1,
+//    ],
 
     // 订单自动补发回调任务（每3分钟扫描一次已支付但回调失败的订单，自动重试回调）
     'order-auto-notify-retry' => [
