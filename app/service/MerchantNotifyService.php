@@ -77,6 +77,19 @@ class MerchantNotifyService
                 'paid_at' => $order->pay_time,
                 'timestamp' => time(),
             ];
+            
+            // 获取签名字符串（使用SignatureHelper统一逻辑）
+            $stringToSign = SignatureHelper::getStringToSign($notifyData, $order->merchant->api_secret, 'standard');
+            
+            // 记录签名前字符串
+            Log::channel('notify')->info('商户回调签名前字符串', [
+                'order_id' => $order->id,
+                'platform_order_no' => $order->platform_order_no,
+                'merchant_order_no' => $order->merchant_order_no,
+                'string_to_sign' => $stringToSign,
+                'api_secret_length' => strlen($order->merchant->api_secret)
+            ]);
+            
             $notifyData['sign'] = SignatureHelper::generate($notifyData, $order->merchant->api_secret, 'standard', 'md5');
 
             // 记录发送的通知数据，方便调试（使用notify日志通道）
