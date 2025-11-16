@@ -15,7 +15,8 @@ class DemoMerchantController
     public function notify(Request $request)
     {
         $params = array_merge($request->post(), $request->get());
-
+        echo '<pre>';
+        print_r($params);
         Log::info('【DEMO-商户回调】收到平台通知', [
             'ip' => $request->getRealIp(),
             'ua' => $request->header('user-agent', ''),
