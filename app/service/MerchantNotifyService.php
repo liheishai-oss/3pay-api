@@ -36,7 +36,7 @@ class MerchantNotifyService
                         'notify_times' => $order->notify_times,
                         'notify_url' => $order->notify_url
                     ],
-                    null, null
+                    '', ''
                 );
                 Log::warning('商户通知重试超限, 跳过通知', ['order_id'=>$order->id, 'notify_times'=>$order->notify_times]);
                 return ['success' => false, 'message' => 'notify retry exceeded'];
@@ -63,7 +63,7 @@ class MerchantNotifyService
                         'circuit_key'=>$circuitKey
                     ]);
                     // 链路日志
-                    try { \app\service\OrderLogService::log($order->trace_id ?? '', $order->platform_order_no, $order->merchant_order_no, '商户回调', 'WARN', '节点28-熔断跳过', [ 'merchant_id'=>$order->merchant_id, 'remain_seconds'=>$remain ], null, null); } catch (\Throwable $e) {}
+                    try { \app\service\OrderLogService::log($order->trace_id ?? '', $order->platform_order_no, $order->merchant_order_no, '商户回调', 'WARN', '节点28-熔断跳过', [ 'merchant_id'=>$order->merchant_id, 'remain_seconds'=>$remain ], '', ''); } catch (\Throwable $e) {}
                     return ['success' => false, 'message' => 'circuit open, wait '.$remain.'s'];
                 }
             }
@@ -199,7 +199,7 @@ class MerchantNotifyService
                                 } catch (\Throwable $e) {
                                     Log::warning('商户回调熔断消息加入队列失败', ['error' => $e->getMessage()]);
                                 }
-                                try { \app\service\OrderLogService::log($order->trace_id ?? '', $order->platform_order_no, $order->merchant_order_no, '商户回调', 'WARN', '节点28-熔断开启', [ 'reason'=>'timeout', 'threshold'=>$timeoutThreshold, 'duration_seconds'=>$circuitSeconds ], null, null); } catch (\Throwable $e) {}
+                                try { \app\service\OrderLogService::log($order->trace_id ?? '', $order->platform_order_no, $order->merchant_order_no, '商户回调', 'WARN', '节点28-熔断开启', [ 'reason'=>'timeout', 'threshold'=>$timeoutThreshold, 'duration_seconds'=>$circuitSeconds ], '', ''); } catch (\Throwable $e) {}
                             }
                         } else {
                             $bad = (int)(Redis::get($badRespCntKey) ?: 0) + 1;
@@ -231,7 +231,7 @@ class MerchantNotifyService
                                 } catch (\Throwable $e) {
                                     Log::warning('商户回调熔断消息加入队列失败', ['error' => $e->getMessage()]);
                                 }
-                                try { \app\service\OrderLogService::log($order->trace_id ?? '', $order->platform_order_no, $order->merchant_order_no, '商户回调', 'WARN', '节点28-熔断开启', [ 'reason'=>'bad_response', 'threshold'=>$badRespThreshold, 'duration_seconds'=>$circuitSeconds ], null, null); } catch (\Throwable $e) {}
+                                try { \app\service\OrderLogService::log($order->trace_id ?? '', $order->platform_order_no, $order->merchant_order_no, '商户回调', 'WARN', '节点28-熔断开启', [ 'reason'=>'bad_response', 'threshold'=>$badRespThreshold, 'duration_seconds'=>$circuitSeconds ], '', ''); } catch (\Throwable $e) {}
                             }
                         }
                     } catch (\Throwable $ee) {
