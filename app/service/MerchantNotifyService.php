@@ -107,16 +107,28 @@ class MerchantNotifyService
             // 标记开始发送：保持 notify_status = FAILED/PENDING 到真正成功
             try {
                 // 发送前记录请求信息（使用notify日志通道）
+                // notify_data 字段记录的就是实际发送给商户的完整数据
                 Log::channel('notify')->info('商户回调请求', [
                     'order_id' => $order->id,
                     'platform_order_no' => $order->platform_order_no,
                     'merchant_order_no' => $order->merchant_order_no,
                     'merchant_id' => $order->merchant_id,
                     'notify_url' => $order->notify_url,
-                    'notify_data' => $notifyData,
+                    'notify_data' => $notifyData, // 实际发送给商户的完整数据（与sendHttpNotify使用的数据一致）
                     'request_time' => date('Y-m-d H:i:s')
                 ]);
                 
+                // 记录实际发送的数据（http_build_query处理后的格式）
+                $actualPostData = http_build_query($notifyData);
+                Log::channel('notify')->debug('商户回调实际发送数据', [
+                    'order_id' => $order->id,
+                    'platform_order_no' => $order->platform_order_no,
+                    'post_data' => $actualPostData,
+                    'notify_data_keys' => array_keys($notifyData),
+                    'notify_data' => $notifyData
+                ]);
+                
+                // 发送HTTP通知（使用$notifyData，与日志中的notify_data字段一致）
                 $response = self::sendHttpNotify($order->notify_url, $notifyData);
 
                 // 成功：回写 SUCCESS
@@ -135,13 +147,14 @@ class MerchantNotifyService
                 }
 
                 // 记录成功回调的详细信息（使用notify日志通道）
+                // notify_data 字段记录的就是实际发送给商户的完整数据
                 Log::channel('notify')->info('商户回调成功', [
                     'order_id' => $order->id,
                     'platform_order_no' => $order->platform_order_no,
                     'merchant_order_no' => $order->merchant_order_no,
                     'merchant_id' => $order->merchant_id,
                     'notify_url' => $order->notify_url,
-                    'notify_data' => $notifyData,
+                    'notify_data' => $notifyData, // 实际发送给商户的完整数据（与sendHttpNotify使用的数据一致）
                     'response' => $response,
                     'notify_times' => $order->notify_times,
                     'notify_time' => $order->notify_time
