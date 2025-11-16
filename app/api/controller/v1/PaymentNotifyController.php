@@ -342,17 +342,18 @@ class PaymentNotifyController
             echo "    - 支付时间: " . ($order->pay_time ?? '未设置') . "\n";
             echo "    - 支付IP: " . ($order->pay_ip ?: '未记录') . "\n";
 
-            // 发送商户通知（成功后回写 SUCCESS），自动回调不绕过熔断
-            echo "  【6.4】发送商户通知\n";
+            echo "  【6.4】提交事务\n";
+            Db::commit();
+            echo "    - 事务提交成功，订单状态已保存到数据库\n";
+
+            // 发送商户通知（在事务提交后发送，确保数据已真正保存），自动回调不绕过熔断
+            echo "  【6.5】发送商户通知（事务提交后）\n";
             $notifyResult = \app\service\MerchantNotifyService::send($order, $notifyParams, ['manual' => false]);
             if ($notifyResult['success']) {
                 echo "    - 商户通知发送成功\n";
             } else {
                 echo "    - 商户通知发送失败: " . ($notifyResult['message'] ?? '未知错误') . "\n";
             }
-
-            echo "  【6.5】提交事务\n";
-            Db::commit();
 
             // 订单支付成功后，将订单加入分账队列（秒级异步处理，不阻塞回调响应）
             try {
