@@ -69,13 +69,13 @@ class MerchantNotifyService
             }
 
             $notifyData = [
-                'platform_order_no' => $order->platform_order_no,
-                'merchant_order_no' => $order->merchant_order_no,
-                'amount' => $order->order_amount,
-                'pay_status' => Order::PAY_STATUS_PAID,
-                'trade_no' => $notifyParams['trade_no'] ?? ($order->trade_no ?? ($order->alipay_order_no ?? '')),
-                'paid_at' => $order->pay_time,
-                'timestamp' => time(),
+                'platform_order_no' => (string)$order->platform_order_no,
+                'merchant_order_no' => (string)$order->merchant_order_no,
+                'amount' => (string)$order->order_amount, // 统一转为字符串，确保数据类型一致
+                'pay_status' => (string)Order::PAY_STATUS_PAID, // 统一转为字符串
+                'trade_no' => (string)($notifyParams['trade_no'] ?? ($order->trade_no ?? ($order->alipay_order_no ?? ''))),
+                'paid_at' => (string)($order->pay_time ?? ''), // 统一格式：始终包含paid_at字段，即使为空也要包含，统一转为字符串
+                'timestamp' => (string)time(), // 统一转为字符串
             ];
             
             // 获取签名字符串（使用SignatureHelper统一逻辑）
@@ -118,17 +118,8 @@ class MerchantNotifyService
                     'request_time' => date('Y-m-d H:i:s')
                 ]);
                 
-                // 记录实际发送的数据（http_build_query处理后的格式）
-                $actualPostData = http_build_query($notifyData);
-                Log::channel('notify')->debug('商户回调实际发送数据', [
-                    'order_id' => $order->id,
-                    'platform_order_no' => $order->platform_order_no,
-                    'post_data' => $actualPostData,
-                    'notify_data_keys' => array_keys($notifyData),
-                    'notify_data' => $notifyData
-                ]);
-                
-                // 发送HTTP通知（使用$notifyData，与日志中的notify_data字段一致）
+                // 发送HTTP通知（直接使用$notifyData，确保与日志中的notify_data完全一致）
+                // 注意：不要对$notifyData做任何修改，直接传给sendHttpNotify
                 $response = self::sendHttpNotify($order->notify_url, $notifyData);
 
                 // 成功：回写 SUCCESS
@@ -274,10 +265,30 @@ class MerchantNotifyService
      */
     private static function sendHttpNotify(string $url, array $data): string
     {
+        // 构建POST数据（直接使用传入的$data，确保与日志中的notify_data完全一致）
+        $postData = http_build_query($data);
+        
+        // 解析POST数据验证字段是否完整（确保与实际发送的数据一致）
+        parse_str($postData, $parsedData);
+        
+        // 记录实际发送的POST数据（使用info级别，确保能看到）
+        Log::channel('notify')->info('商户回调实际发送POST数据验证', [
+            'url' => $url,
+            'post_data_string' => $postData,
+            'original_data_keys' => array_keys($data),
+            'parsed_data_keys' => array_keys($parsedData),
+            'has_paid_at_in_original' => isset($data['paid_at']),
+            'has_paid_at_in_parsed' => isset($parsedData['paid_at']),
+            'paid_at_value' => $data['paid_at'] ?? null,
+            'parsed_paid_at_value' => $parsedData['paid_at'] ?? null,
+            'original_data' => $data,
+            'parsed_data' => $parsedData,
+        ]);
+        
         $ch = curl_init();
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query($data));
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, 10);
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
