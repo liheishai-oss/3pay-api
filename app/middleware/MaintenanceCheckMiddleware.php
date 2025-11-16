@@ -47,22 +47,15 @@ class MaintenanceCheckMiddleware implements MiddlewareInterface
             // 获取当前服务器IP（从.env文件获取）
             $currentServerIp = $this->getServerIpFromEnv();
             
-            // 如果无法获取到IP，直接返回503
+            // 如果无法获取到IP，允许请求通过（不应该因为无法获取IP而阻止服务）
             if (empty($currentServerIp)) {
-                Log::info('无法获取有效服务器IP，返回503维护状态', [
+                Log::warning('无法获取有效服务器IP，允许请求通过', [
                     'current_server_ip' => $currentServerIp,
                     'request_uri' => $request->uri(),
-                    'request_method' => $request->method()
+                    'request_method' => $request->method(),
+                    'note' => '无法获取服务器IP，跳过维护状态检查，允许请求继续处理'
                 ]);
-                return new Response(503, [
-                    'Content-Type' => 'application/json',
-                    'Retry-After' => '300'
-                ], json_encode([
-                    'code' => 503,
-                    'status' => false,
-                    'message' => 'Service Unavailable - Maintenance Mode',
-                    'data' => null
-                ]));
+                return $handler($request);
             }
             
             // 检查数据库表是否存在
@@ -122,22 +115,15 @@ class MaintenanceCheckMiddleware implements MiddlewareInterface
                     'data' => null
                 ]));
             } else {
-                // 数据库中不存在该IP的服务器记录，返回503维护状态
-                Log::info('数据库中不存在该IP的服务器记录，返回503维护状态', [
+                // 数据库中不存在该IP的服务器记录，允许请求通过（新服务器可能还未注册）
+                Log::info('数据库中不存在该IP的服务器记录，允许请求通过', [
                     'current_server_ip' => $currentServerIp,
                     'request_uri' => $request->uri(),
-                    'request_method' => $request->method()
+                    'request_method' => $request->method(),
+                    'note' => '新服务器可能还未在数据库中注册，允许请求继续处理'
                 ]);
 
-                return new Response(503, [
-                    'Content-Type' => 'application/json',
-                    'Retry-After' => '300'
-                ], json_encode([
-                    'code' => 503,
-                    'status' => false,
-                    'message' => 'Service Unavailable - Maintenance Mode',
-                    'data' => null
-                ]));
+                return $handler($request);
             }
 
         } catch (\Exception $e) {
