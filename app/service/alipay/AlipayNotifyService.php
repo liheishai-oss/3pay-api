@@ -18,10 +18,11 @@ class AlipayNotifyService
      * 处理支付通知
      * @param array $params 通知参数
      * @param array $paymentInfo 支付配置信息
+     * @param string $payIp 支付者IP
      * @return array 处理结果
      * @throws Exception
      */
-    public static function handlePaymentNotify(array $params, array $paymentInfo): array
+    public static function handlePaymentNotify(array $params, array $paymentInfo, string $payIp = ''): array
     {
         try {
             echo "    【5.4.1】准备支付宝配置\n";
@@ -83,6 +84,9 @@ class AlipayNotifyService
             
             // 触发订单支付成功事件（使用 try-catch 确保即使事件失败也不影响后续处理）
             echo "    【5.4.8】触发支付成功事件\n";
+            if ($payIp) {
+                echo "      - 支付者IP: {$payIp}\n";
+            }
             @flush();
             @ob_flush();
             try {
@@ -91,6 +95,7 @@ class AlipayNotifyService
                     'trade_no' => $notifyData['trade_no'],
                     'amount' => $notifyData['total_amount'],
                     'payment_method' => 'alipay',
+                    'pay_ip' => $payIp, // 传递支付者IP
                     'notify_data' => $notifyData
                 ]);
                 echo "      - 事件触发成功\n";

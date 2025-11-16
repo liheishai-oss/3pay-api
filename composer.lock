@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "d9efb878b42ca172b56828e14b523ecc",
+    "content-hash": "50ca463afc175ca9c3fceb5a6d8b2f7b",
     "packages": [
         {
             "name": "adbario/php-dot-notation",
@@ -6008,6 +6008,37 @@
                 "source": "https://github.com/webman-php/database/tree/v2.1.6"
             },
             "time": "2025-04-04T13:23:25+00:00"
+        },
+        {
+            "name": "webman/event",
+            "version": "v1.0.5",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/webman-php/event.git",
+                "reference": "b1c3f6b70fd290e48288703d59bead0e28f9fb84"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/webman-php/event/zipball/b1c3f6b70fd290e48288703d59bead0e28f9fb84",
+                "reference": "b1c3f6b70fd290e48288703d59bead0e28f9fb84",
+                "shasum": ""
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Webman\\Event\\": "src"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "description": "Webman event plugin",
+            "support": {
+                "issues": "https://github.com/webman-php/event/issues",
+                "source": "https://github.com/webman-php/event/tree/v1.0.5"
+            },
+            "time": "2023-12-04T09:22:12+00:00"
         },
         {
             "name": "webman/log",
