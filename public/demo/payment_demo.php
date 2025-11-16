@@ -40,7 +40,7 @@ class PaymentDemo
         return md5($signString);
     }
 
-    
+
     /**
      * 发送HTTP请求
      */
