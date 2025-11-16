@@ -11,8 +11,8 @@ class TelegramWebhookValidator
      */
     public static function validateAndExtract(?array $message): array
     {
-        // 记录原始消息数据
-        \support\Log::info('TelegramWebhookValidator 原始消息', [
+        // 记录原始消息数据到单独的telegram日志文件
+        \support\Log::channel('telegram')->info('TelegramWebhookValidator 原始消息', [
             'message' => $message,
             'message_keys' => is_array($message) ? array_keys($message) : []
         ]);

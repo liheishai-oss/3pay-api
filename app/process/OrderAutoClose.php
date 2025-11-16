@@ -87,7 +87,7 @@ class OrderAutoClose
                 }
 
                 if ($closedCount > 0) {
-                    Log::info('订单自动关闭任务执行', [
+                    Log::channel('order')->info('订单自动关闭任务执行', [
                         'closed_count' => $closedCount,
                         'skipped_count' => $skippedCount,
                         'time' => $now,
@@ -106,9 +106,9 @@ class OrderAutoClose
                     }
                 }
             } catch (\Throwable $e) {
-                Log::error('订单自动关闭任务失败', [
-                    'error' => $e->getMessage(),
-                ]);
+            Log::channel('order')->error('订单自动关闭任务失败', [
+                'error' => $e->getMessage(),
+            ]);
             }
         });
     }

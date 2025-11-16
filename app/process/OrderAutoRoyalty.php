@@ -118,13 +118,13 @@ class OrderAutoRoyalty
 
                     if ($result['success']) {
                         $processedCount++;
-                        Log::info('队列分账成功', [
+                        Log::channel('royalty')->info('队列分账成功', [
                             'order_id' => $orderId,
                             'platform_order_no' => $order->platform_order_no,
                             'royalty_amount' => $result['data']['royalty_amount'] ?? 0
                         ]);
                     } else {
-                        Log::warning('队列分账失败', [
+                        Log::channel('royalty')->warning('队列分账失败', [
                             'order_id' => $orderId,
                             'platform_order_no' => $order->platform_order_no,
                             'reason' => $result['message'] ?? '未知原因'
@@ -132,7 +132,7 @@ class OrderAutoRoyalty
                     }
 
                 } catch (\Throwable $e) {
-                    Log::error('队列分账处理异常', [
+                    Log::channel('royalty')->error('队列分账处理异常', [
                         'order_id' => $orderId,
                         'error' => $e->getMessage(),
                         'trace' => $e->getTraceAsString()
@@ -144,11 +144,11 @@ class OrderAutoRoyalty
             }
 
             if ($processedCount > 0) {
-                Log::info('分账队列处理完成', ['processed_count' => $processedCount]);
+                Log::channel('royalty')->info('分账队列处理完成', ['processed_count' => $processedCount]);
             }
 
         } catch (\Throwable $e) {
-            Log::error('分账队列处理失败', [
+            Log::channel('royalty')->error('分账队列处理失败', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);

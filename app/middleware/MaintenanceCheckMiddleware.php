@@ -35,16 +35,6 @@ class MaintenanceCheckMiddleware implements MiddlewareInterface
                 'is_api' => str_starts_with($uri, '/api/'),
                 'method' => $request->method()
             ]);
-            // 屏蔽特定本地访问地址的维护状态验证
-            // 只允许 127.0.0.1:8787 和 localhost:8787 跳过维护检查
-            if ($host === '127.0.0.1:8787' || $host === 'localhost:8787') {
-                Log::info('跳过特定本地访问地址的维护状态检查', [
-                    'host' => $host,
-                    'server_port' => $serverPort,
-                    'uri' => $uri
-                ]);
-                return $handler($request);
-            }
             
             // 排除所有管理员接口，避免管理员无法在维护期间管理服务器状态
             if (str_starts_with($uri, '/api/v1/admin')) {
@@ -56,15 +46,6 @@ class MaintenanceCheckMiddleware implements MiddlewareInterface
             
             // 获取当前服务器IP（从.env文件获取）
             $currentServerIp = $this->getServerIpFromEnv();
-            
-            // 如果是127.0.0.1，跳过维护检查
-            if ($currentServerIp === '127.0.0.1') {
-                Log::info('本地IP跳过维护状态检查', [
-                    'current_server_ip' => $currentServerIp,
-                    'request_uri' => $request->uri()
-                ]);
-                return $handler($request);
-            }
             
             // 如果无法获取到IP，直接返回503
             if (empty($currentServerIp)) {

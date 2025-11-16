@@ -323,6 +323,14 @@
             <div class="qr-code-text">请使用支付宝扫描二维码完成支付</div>
         </div>
         <?php endif; ?>
+        
+        <button id="payButton" class="pay-button" onclick="submitPayment()">
+            <?php if ($isMobile): ?>
+                📱 立即支付
+            <?php else: ?>
+                💳 立即支付
+            <?php endif; ?>
+        </button>
             
             <!-- 支付注意事项 -->
         <div class="payment-notice" style="margin-top: 20px; margin-bottom: 30px;">
@@ -332,14 +340,6 @@
                 <div class="payment-notice-item payment-notice-red">4、部分不沟通，直接发起投诉的，将永久封禁账户！</div>
                 <div class="payment-notice-footer">注意:支付保赔付，安全保障，感谢您的参与!!</div>
             </div>
-        
-        <button id="payButton" class="pay-button" onclick="submitPayment()">
-            <?php if ($isMobile): ?>
-                📱 立即支付
-            <?php else: ?>
-                💳 立即支付
-            <?php endif; ?>
-        </button>
         
         <!-- 🔍 调试按钮：查看协议地址（已注释，需要调试时可取消注释） -->
         <!--

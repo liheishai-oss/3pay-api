@@ -77,7 +77,7 @@ class PaymentNotifyController
             }
             
             echo "【步骤2】正常回调模式\n";
-            Log::info('收到支付宝支付通知', [
+            Log::channel('payment')->info('收到支付宝支付通知', [
                 'params' => $params,
                 'ip' => $request->getRealIp()
             ]);
@@ -217,7 +217,7 @@ class PaymentNotifyController
                     echo "    - 异常位置: " . $e->getFile() . ":" . $e->getLine() . "\n";
                     throw $e;
                 }
-                Log::info('支付通知处理成功', [
+                Log::channel('payment')->info('支付通知处理成功', [
                     'order_no' => $params['out_trade_no'],
                     'trade_no' => $params['trade_no'] ?? '',
                     'is_duplicate' => $isDuplicate
@@ -260,7 +260,7 @@ class PaymentNotifyController
             echo "【异常】支付回调处理异常\n";
             echo "  - 错误信息: " . $e->getMessage() . "\n";
             echo "  - 错误位置: " . $e->getFile() . ":" . $e->getLine() . "\n";
-            Log::error('支付通知处理异常', [
+            Log::channel('payment')->error('支付通知处理异常', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);

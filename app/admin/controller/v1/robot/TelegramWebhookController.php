@@ -18,8 +18,8 @@ class TelegramWebhookController
     {
         try {
             $data = $request->all();
-            // 记录原始请求数据
-            Log::info('Telegram Webhook 原始数据', [
+            // 记录原始请求数据到单独的telegram日志文件
+            Log::channel('telegram')->info('Telegram Webhook 原始数据', [
                 'raw_data' => $data,
                 'has_message' => isset($data['message']),
                 'message_keys' => isset($data['message']) ? array_keys($data['message']) : []
