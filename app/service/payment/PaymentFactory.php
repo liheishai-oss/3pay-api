@@ -413,10 +413,11 @@ class PaymentFactory
      * 处理支付通知
      * @param \app\model\Order $order 订单对象（已加载product和paymentType关联）
      * @param array $notifyParams 通知参数
+     * @param string $payIp 支付者IP
      * @return array 处理结果
      * @throws Exception
      */
-    public static function handlePaymentNotify(\app\model\Order $order, array $notifyParams): array
+    public static function handlePaymentNotify(\app\model\Order $order, array $notifyParams, string $payIp = ''): array
     {
         try {
             echo "  【5.1】开始处理支付通知\n";
@@ -482,7 +483,7 @@ class PaymentFactory
             // 调用支付宝通知处理
             echo "  【5.4】调用支付宝通知处理服务\n";
             $alipayService = new AlipayService();
-            $result = $alipayService->handlePaymentNotify($notifyParams, $paymentConfig);
+            $result = $alipayService->handlePaymentNotify($notifyParams, $paymentConfig, $payIp);
             echo "  【5.5】支付宝通知处理完成\n";
             echo "    - 处理结果: " . ($result['success'] ? '成功' : '失败') . "\n";
             if (!$result['success']) {

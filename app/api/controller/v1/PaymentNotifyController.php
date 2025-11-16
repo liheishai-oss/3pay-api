@@ -143,10 +143,13 @@ class PaymentNotifyController
 
             // 通过支付工厂处理通知（直接传递订单对象，避免重复查询）
             echo "【步骤5】验证签名和处理通知\n";
+            $payIp = $request->getRealIp(); // 获取支付者IP
+            echo "  - 支付者IP: {$payIp}\n";
             try {
                 $result = PaymentFactory::handlePaymentNotify(
                     $order,
-                    $params
+                    $params,
+                    $payIp
                 );
                 
                 echo "  - 处理结果返回\n";

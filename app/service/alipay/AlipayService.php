@@ -129,12 +129,13 @@ class AlipayService
      * 处理支付通知
      * @param array $params 通知参数
      * @param array $paymentInfo 支付配置信息
+     * @param string $payIp 支付者IP
      * @return array 处理结果
      * @throws Exception
      */
-    public function handlePaymentNotify(array $params, array $paymentInfo): array
+    public function handlePaymentNotify(array $params, array $paymentInfo, string $payIp = ''): array
     {
-        return AlipayNotifyService::handlePaymentNotify($params, $paymentInfo);
+        return AlipayNotifyService::handlePaymentNotify($params, $paymentInfo, $payIp);
     }
     
     /**
