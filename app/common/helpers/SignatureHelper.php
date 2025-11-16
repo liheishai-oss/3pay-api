@@ -81,6 +81,49 @@ class SignatureHelper
     }
     
     /**
+     * 获取签名字符串（用于日志记录）
+     * 
+     * @param array $params 参数数组
+     * @param string $secretKey 密钥
+     * @param string $signType 签名类型：standard(标准key=value&格式) 或 simple(只拼接值)
+     * @return string 签名字符串
+     */
+    public static function getStringToSign(array $params, string $secretKey, string $signType = 'standard'): string
+    {
+        // 移除不需要签名的字段
+        unset($params['sign']);
+        unset($params['client_ip']);
+        unset($params['entities_id']);
+        unset($params['debug']);
+        
+        // 按键名排序
+        ksort($params);
+        
+        // 构建签名字符串
+        $stringToSign = '';
+        
+        if ($signType === 'standard') {
+            // 标准格式：key=value&key2=value2&...&key=secretKey
+            foreach ($params as $key => $value) {
+                if ($value !== '' && $value !== null) {
+                    $stringToSign .= $key . '=' . $value . '&';
+                }
+            }
+            $stringToSign .= 'key=' . $secretKey;
+        } else {
+            // 简单格式：value1value2...secretKey
+            foreach ($params as $key => $value) {
+                if ($value !== '' && $value !== null) {
+                    $stringToSign .= (string)$value;
+                }
+            }
+            $stringToSign .= $secretKey;
+        }
+        
+        return $stringToSign;
+    }
+    
+    /**
      * 生成随机字符串（用于生成nonce等）
      * 
      * @param int $length 长度
