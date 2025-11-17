@@ -95,7 +95,7 @@ class AdminController
             $baseQuery = AdminRule::where([
                 'is_menu' => 1,
                 'status'  => 1
-            ])->select(['id', 'title', 'icon', 'path', 'parent_id']);
+            ])->select(['id', 'title', 'icon', 'path', 'parent_id', 'rule']);
             
             if ($userId == Common::ADMIN_USER_ID) {
                 Log::info('超级管理员，获取所有菜单');

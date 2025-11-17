@@ -389,4 +389,176 @@ class AlipayPaymentService
             throw new Exception("预授权支付创建失败: " . $e->getMessage());
         }
     }
+    
+    /**
+     * 转账到支付宝账户
+     * @param array $transferInfo 转账信息
+     *   - out_biz_no: 商户转账唯一订单号
+     *   - trans_amount: 转账金额
+     *   - payee_type: 收款方账户类型（ALIPAY_USERID/ALIPAY_LOGONID）
+     *   - payee_account: 收款方账户
+     *   - payee_real_name: 收款方真实姓名（可选）
+     *   - remark: 转账备注（可选）
+     * @param array $paymentInfo 支付配置信息
+     * @return array 转账结果
+     * @throws Exception
+     */
+    public static function transfer(array $transferInfo, array $paymentInfo): array
+    {
+        try {
+            $config = AlipayConfig::getConfig($paymentInfo);
+            
+            // 验证必填参数
+            if (empty($transferInfo['out_biz_no'])) {
+                throw new Exception("转账订单号不能为空");
+            }
+            if (empty($transferInfo['trans_amount']) || $transferInfo['trans_amount'] <= 0) {
+                throw new Exception("转账金额必须大于0");
+            }
+            if (empty($transferInfo['payee_account'])) {
+                throw new Exception("收款方账户不能为空");
+            }
+            
+            // 判断收款账号类型：如果是2088开头的16位数字，则使用ALIPAY_USERID，否则使用ALIPAY_LOGON_ID
+            // 注意：根据支付宝文档，正确的值是 ALIPAY_LOGON_ID（带下划线），不是 ALIPAY_LOGONID
+            $payeeAccount = $transferInfo['payee_account'];
+            $payeeType = 'ALIPAY_LOGON_ID'; // 默认使用登录号（手机号或邮箱）
+            
+            // 如果是2088开头的16位数字，使用用户ID
+            if (preg_match('/^2088\d{12}$/', $payeeAccount)) {
+                $payeeType = 'ALIPAY_USERID';
+            }
+            
+            // 如果用户明确指定了类型，使用用户指定的类型（但需要转换为正确格式）
+            if (!empty($transferInfo['payee_type'])) {
+                $userPayeeType = strtoupper($transferInfo['payee_type']);
+                // 兼容处理：将 ALIPAY_LOGONID 转换为 ALIPAY_LOGON_ID
+                if ($userPayeeType === 'ALIPAY_LOGONID') {
+                    $payeeType = 'ALIPAY_LOGON_ID';
+                } elseif ($userPayeeType === 'ALIPAY_USERID') {
+                    $payeeType = 'ALIPAY_USERID';
+                } else {
+                    $payeeType = $userPayeeType;
+                }
+            }
+            
+            Log::info("开始调用支付宝转账接口", [
+                'out_biz_no' => $transferInfo['out_biz_no'],
+                'trans_amount' => $transferInfo['trans_amount'],
+                'payee_account' => $payeeAccount,
+                'payee_type' => $payeeType
+            ]);
+            
+            // 使用支付宝统一转账接口 alipay.fund.trans.uni.transfer
+            // 构建业务参数
+            $bizParams = [
+                'out_biz_no' => $transferInfo['out_biz_no'], // 商户转账唯一订单号
+                'trans_amount' => number_format($transferInfo['trans_amount'], 2, '.', ''), // 转账金额
+                'product_code' => 'TRANS_ACCOUNT_NO_PWD', // 产品码：单笔无密转账到支付宝账户
+                'biz_scene' => 'DIRECT_TRANSFER', // 业务场景：单笔无密转账
+                'payee_info' => [
+                    'identity' => $payeeAccount, // 收款方账户（手机号、邮箱或用户ID）
+                    'identity_type' => $payeeType, // 收款方账户类型：ALIPAY_USERID 或 ALIPAY_LOGON_ID
+                ],
+            ];
+            
+            // 如果提供了收款方真实姓名，添加到参数中
+            if (!empty($transferInfo['payee_real_name'])) {
+                $bizParams['payee_info']['name'] = $transferInfo['payee_real_name'];
+            }
+            
+            // 如果提供了备注，添加到参数中
+            if (!empty($transferInfo['remark'])) {
+                $bizParams['remark'] = $transferInfo['remark'];
+            }
+            
+            // 文本参数（可选参数，如app_auth_token等）
+            $textParams = [];
+            
+            // 使用通用接口调用转账接口（需要3个参数：API名称、textParams、bizParams）
+            $result = Factory::setOptions($config)
+                ->util()
+                ->generic()
+                ->execute('alipay.fund.trans.uni.transfer', $textParams, $bizParams);
+            
+            // 检查响应body是否存在
+            $bodyContent = null;
+            if (property_exists($result, 'body') && $result->body !== null) {
+                $bodyContent = $result->body;
+            } elseif (property_exists($result, 'httpBody') && $result->httpBody !== null) {
+                $bodyContent = $result->httpBody;
+            } else {
+                Log::error("支付宝转账响应body为空", [
+                    'out_biz_no' => $transferInfo['out_biz_no'],
+                    'result_class' => get_class($result),
+                ]);
+                throw new Exception("支付宝转账响应为空");
+            }
+            
+            if (empty($bodyContent)) {
+                throw new Exception("支付宝转账响应为空");
+            }
+            
+            $response = json_decode($bodyContent, true);
+            
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                Log::error("支付宝转账响应JSON解析失败", [
+                    'out_biz_no' => $transferInfo['out_biz_no'],
+                    'json_error' => json_last_error_msg(),
+                    'body_preview' => substr($bodyContent, 0, 500)
+                ]);
+                throw new Exception("支付宝转账响应解析失败: " . json_last_error_msg());
+            }
+            
+            // 检查响应格式
+            if (!isset($response['alipay_fund_trans_uni_transfer_response'])) {
+                Log::error("支付宝转账响应格式错误", [
+                    'out_biz_no' => $transferInfo['out_biz_no'],
+                    'response' => $response
+                ]);
+                throw new Exception("支付宝转账响应格式错误");
+            }
+            
+            $transferResponse = $response['alipay_fund_trans_uni_transfer_response'];
+            
+            // 检查是否成功
+            if ($transferResponse['code'] !== '10000') {
+                $errorMsg = $transferResponse['sub_msg'] ?? $transferResponse['msg'] ?? '转账失败';
+                Log::error("支付宝转账失败", [
+                    'out_biz_no' => $transferInfo['out_biz_no'],
+                    'code' => $transferResponse['code'],
+                    'msg' => $transferResponse['msg'] ?? '',
+                    'sub_msg' => $transferResponse['sub_msg'] ?? '',
+                    'response' => $transferResponse
+                ]);
+                throw new Exception("支付宝转账失败: {$errorMsg}");
+            }
+            
+            // 转账成功
+            $transferResult = [
+                'success' => true,
+                'out_biz_no' => $transferResponse['out_biz_no'] ?? $transferInfo['out_biz_no'],
+                'order_id' => $transferResponse['order_id'] ?? '', // 支付宝转账单据号
+                'pay_fund_order_id' => $transferResponse['pay_fund_order_id'] ?? '', // 支付宝支付资金流水号
+                'status' => $transferResponse['status'] ?? '', // 转账状态：SUCCESS-成功，FAIL-失败，DEALING-处理中
+                'trans_date' => $transferResponse['trans_date'] ?? '', // 转账时间
+            ];
+            
+            Log::info("支付宝转账成功", [
+                'out_biz_no' => $transferInfo['out_biz_no'],
+                'order_id' => $transferResult['order_id'],
+                'status' => $transferResult['status']
+            ]);
+            
+            return $transferResult;
+            
+        } catch (Exception $e) {
+            Log::error("支付宝转账异常", [
+                'out_biz_no' => $transferInfo['out_biz_no'] ?? '',
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw new Exception("支付宝转账失败: " . $e->getMessage());
+        }
+    }
 }

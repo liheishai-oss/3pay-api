@@ -545,5 +545,207 @@ class SubjectController
 
         return success($products);
     }
+
+    /**
+     * 查询主体余额
+     * @param Request $request
+     * @param int $id 主体ID
+     * @return Response
+     */
+    public function queryBalance(Request $request, int $id): Response
+    {
+        $userData = $request->userData;
+        $isAgent = $userData['is_agent'] ?? false;
+        $agentId = $userData['agent_id'] ?? null;
+
+        $query = Subject::with(['cert']);
+        
+        // 代理商只能查询自己的主体
+        if ($isAgent && $agentId) {
+            $query->where('agent_id', $agentId);
+        }
+
+        $subject = $query->find($id);
+        
+        if (!$subject) {
+            throw new MyBusinessException('主体不存在或无权访问');
+        }
+
+        try {
+            // 检查证书是否存在
+            if (!$subject->cert) {
+                throw new MyBusinessException('主体证书配置缺失，无法查询余额');
+            }
+
+            // 使用 PaymentFactory 获取支付配置（确保配置格式正确）
+            // 查找支付宝支付类型
+            $paymentType = \app\model\PaymentType::where('product_name', 'like', '%支付宝%')->first();
+            
+            if (!$paymentType) {
+                // 如果找不到支付宝支付类型，创建一个临时的 PaymentType 对象
+                // 或者直接构建配置（复制 PaymentFactory 的逻辑）
+                $cert = $subject->cert;
+                
+                // 处理证书路径：优先使用文件路径，如果文件不存在则使用数据库中的证书内容创建临时文件
+                $alipayCertPath = null;
+                if (!empty($cert->alipay_public_cert_path)) {
+                    $fullPath = base_path('public' . $cert->alipay_public_cert_path);
+                    if (file_exists($fullPath)) {
+                        $alipayCertPath = 'public' . $cert->alipay_public_cert_path;
+                    }
+                }
+                if (!$alipayCertPath && !empty($cert->alipay_public_cert)) {
+                    $tempDir = runtime_path() . '/certs';
+                    if (!is_dir($tempDir)) {
+                        mkdir($tempDir, 0755, true);
+                    }
+                    $tempFile = $tempDir . '/alipay_public_cert_' . $subject->id . '.crt';
+                    file_put_contents($tempFile, $cert->alipay_public_cert);
+                    $alipayCertPath = str_replace(base_path() . '/', '', $tempFile);
+                }
+
+                $alipayRootCertPath = null;
+                if (!empty($cert->alipay_root_cert_path)) {
+                    $fullPath = base_path('public' . $cert->alipay_root_cert_path);
+                    if (file_exists($fullPath)) {
+                        $alipayRootCertPath = 'public' . $cert->alipay_root_cert_path;
+                    }
+                }
+                if (!$alipayRootCertPath && !empty($cert->alipay_root_cert)) {
+                    $tempDir = runtime_path() . '/certs';
+                    if (!is_dir($tempDir)) {
+                        mkdir($tempDir, 0755, true);
+                    }
+                    $tempFile = $tempDir . '/alipay_root_cert_' . $subject->id . '.crt';
+                    file_put_contents($tempFile, $cert->alipay_root_cert);
+                    $alipayRootCertPath = str_replace(base_path() . '/', '', $tempFile);
+                }
+
+                $appCertPath = null;
+                if (!empty($cert->app_public_cert_path)) {
+                    $fullPath = base_path('public' . $cert->app_public_cert_path);
+                    if (file_exists($fullPath)) {
+                        $appCertPath = 'public' . $cert->app_public_cert_path;
+                    }
+                }
+                if (!$appCertPath && !empty($cert->app_public_cert)) {
+                    $tempDir = runtime_path() . '/certs';
+                    if (!is_dir($tempDir)) {
+                        mkdir($tempDir, 0755, true);
+                    }
+                    $tempFile = $tempDir . '/app_public_cert_' . $subject->id . '.crt';
+                    file_put_contents($tempFile, $cert->app_public_cert);
+                    $appCertPath = str_replace(base_path() . '/', '', $tempFile);
+                }
+
+                // 构建支付配置（使用正确的字段名）
+                $appUrl = env('APP_URL', 'http://127.0.0.1:8787');
+                $paymentInfo = [
+                    'appid' => $subject->alipay_app_id,
+                    'AppPrivateKey' => $cert->app_private_key,
+                    'alipayCertPublicKey' => $alipayCertPath,
+                    'alipayRootCert' => $alipayRootCertPath,
+                    'appCertPublicKey' => $appCertPath,
+                    'notify_url' => rtrim($appUrl, '/') . '/api/v1/payment/notify/alipay',
+                    'sandbox' => false,
+                ];
+            } else {
+                // 使用 PaymentFactory 获取配置（推荐方式）
+                $paymentInfo = \app\service\payment\PaymentFactory::getPaymentConfig($subject, $paymentType);
+            }
+
+            // 调用支付宝账户余额查询接口
+            $config = \app\service\alipay\AlipayConfig::getConfig($paymentInfo);
+            
+            // execute 方法需要3个参数：API名称、文本参数、业务参数
+            // 使用 alipay.data.bill.balance.query 接口查询普通商户余额
+            $textParams = []; // 文本参数（可选参数，如app_auth_token等）
+            
+            // 构建业务参数
+            // alipay.data.bill.balance.query 接口参数说明：
+            // - bill_date: 账单日期（格式：yyyyMMdd），查询指定日期的余额
+            // - bill_user_id: 账单归属用户ID（可选）
+            $billDate = date('Ymd'); // 查询今天的余额
+            
+            $bizParams = [
+                'bill_date' => $billDate
+            ];
+            
+            // 如果主体有 alipay_pid，可以添加 bill_user_id 参数
+            if (!empty($subject->alipay_pid)) {
+                $bizParams['bill_user_id'] = $subject->alipay_pid;
+            }
+            
+            $result = \Alipay\EasySDK\Kernel\Factory::setOptions($config)
+                ->util()
+                ->generic()
+                ->execute('alipay.data.bill.balance.query', $textParams, $bizParams);
+
+            // 检查响应body是否存在
+            $bodyContent = null;
+            if (property_exists($result, 'body') && $result->body !== null) {
+                $bodyContent = $result->body;
+            } elseif (property_exists($result, 'httpBody') && $result->httpBody !== null) {
+                $bodyContent = $result->httpBody;
+            } else {
+                throw new MyBusinessException('余额查询响应为空');
+            }
+
+            if (empty($bodyContent)) {
+                throw new MyBusinessException('余额查询响应为空');
+            }
+
+            $response = json_decode($bodyContent, true);
+
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                throw new MyBusinessException('余额查询响应解析失败: ' . json_last_error_msg());
+            }
+
+            // alipay.data.bill.balance.query 接口的响应格式
+            if (!isset($response['alipay_data_bill_balance_query_response'])) {
+                throw new MyBusinessException('余额查询响应格式错误，未找到 alipay_data_bill_balance_query_response');
+            }
+
+            $balanceResponse = $response['alipay_data_bill_balance_query_response'];
+
+            if ($balanceResponse['code'] !== '10000') {
+                $errorMsg = $balanceResponse['msg'] ?? '未知错误';
+                $subMsg = $balanceResponse['sub_msg'] ?? '';
+                throw new MyBusinessException("余额查询失败: {$errorMsg}" . ($subMsg ? " - {$subMsg}" : ""));
+            }
+
+            // 提取余额信息
+            // alipay.data.bill.balance.query 返回的字段可能不同，需要根据实际响应调整
+            // 总余额 = 可用余额 + 冻结余额
+            $availableAmount = $balanceResponse['available_amount'] ?? $balanceResponse['balance'] ?? '0.00';
+            $freezeAmount = $balanceResponse['freeze_amount'] ?? $balanceResponse['frozen_amount'] ?? '0.00';
+            $totalAmount = $balanceResponse['total_amount'] ?? '0.00';
+            
+            // 如果没有总余额字段，计算总余额 = 可用余额 + 冻结余额
+            if ($totalAmount == '0.00' || empty($totalAmount)) {
+                $totalAmount = bcadd($availableAmount, $freezeAmount, 2);
+            }
+            
+            $accountType = $balanceResponse['account_type'] ?? '';
+
+            return success([
+                'total_amount' => $totalAmount,        // 总余额
+                'available_amount' => $availableAmount, // 可用余额
+                'freeze_amount' => $freezeAmount,      // 冻结余额
+                'account_type' => $accountType,
+                'query_time' => date('Y-m-d H:i:s'),
+                'bill_date' => $billDate
+            ]);
+
+        } catch (MyBusinessException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            \support\Log::error('余额查询失败', [
+                'subject_id' => $id,
+                'error' => $e->getMessage()
+            ]);
+            throw new MyBusinessException('余额查询失败: ' . $e->getMessage());
+        }
+    }
 }
 

@@ -637,11 +637,11 @@ class OrderController
         // 第一阶段：尝试使用Redis缓存防重
         $redisAvailable = true;
         for ($i = 0; $i < OrderConstants::ORDER_NUMBER_RETRY_LIMIT; $i++) {
-            // 生成4位随机大写字母数字：C4CA
-            $randomStr = strtoupper(substr(bin2hex(random_bytes(4)), 0, 8));
+            // 生成4位随机大写字母数字（再减少2位）
+            $randomStr = strtoupper(substr(bin2hex(random_bytes(2)), 0, 4));
             
-            // 订单号格式：BY{代理商ID}{日期YYYYMMDD}{时间HHMMSS}{随机8位}
-            // 例如：BY120251022211850C4CA7731
+            // 订单号格式：BY{代理商ID}{日期YYYYMMDD}{时间HHMMSS}{随机4位}
+            // 例如：BY120251022211850C4CA
             $orderNumber = $prefix . $agentId . $date . $time . $randomStr;
             $key = CacheKeys::getOrderCommitLog($orderNumber);
             
@@ -664,7 +664,7 @@ class OrderController
         
         // 第二阶段：Redis不可用时的降级方案 - 使用数据库查询防重
         for ($i = 0; $i < OrderConstants::ORDER_NUMBER_RETRY_LIMIT; $i++) {
-            $randomStr = strtoupper(substr(bin2hex(random_bytes(4)), 0, 8));
+            $randomStr = strtoupper(substr(bin2hex(random_bytes(2)), 0, 4));
             $fallbackNumber = $prefix . $agentId . $date . $time . $randomStr;
             
             // 检查数据库中是否存在该订单号
