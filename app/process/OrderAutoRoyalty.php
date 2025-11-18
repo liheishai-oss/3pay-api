@@ -34,6 +34,21 @@ class OrderAutoRoyalty
     const MINUTES_AFTER_PAY = 5;
 
     /**
+     * 队列处理锁的过期时间（秒）
+     */
+    const PROCESS_LOCK_TTL = 60;
+
+    /**
+     * 重试最大次数
+     */
+    const RETRY_MAX_ATTEMPTS = 3;
+
+    /**
+     * 默认重试延迟（秒）
+     */
+    const RETRY_DEFAULT_DELAY = 300;
+
+    /**
      * Worker启动时执行
      */
     public function onWorkerStart(Worker $worker)
@@ -46,6 +61,11 @@ class OrderAutoRoyalty
         // 每10分钟执行一次兜底扫描（防止队列丢失的情况）
         new Crontab('*/10 * * * *', function () {
             $this->processAutoRoyalty();
+        });
+
+        // 每30秒检查一次重试队列
+        new Crontab('*/30 * * * * *', function () {
+            $this->processRoyaltyRetryQueue();
         });
 
         Log::info('订单自动分账任务已启动', [
@@ -85,21 +105,28 @@ class OrderAutoRoyalty
 
                 // 检查是否正在处理（防止并发）
                 $processingKey = CacheKeys::getRoyaltyProcessingKey($orderId);
-                if (Redis::get($processingKey)) {
+                $lockValue = 'royalty_lock_' . uniqid('', true);
+                $lockAcquired = false;
+                try {
+                    $lockAcquired = Redis::set($processingKey, $lockValue, 'EX', self::PROCESS_LOCK_TTL, 'NX');
+                } catch (\Throwable $e) {
+                    Log::channel('royalty')->warning('设置分账处理锁失败', [
+                        'order_id' => $orderId,
+                        'error' => $e->getMessage()
+                    ]);
+                }
+
+                if (!$lockAcquired) {
                     // 如果正在处理，将任务重新放回队列
                     Redis::lpush($queueKey, $orderIdJson);
                     continue;
                 }
-
-                // 设置处理中标记（5分钟过期）
-                Redis::setex($processingKey, 300, '1');
 
                 try {
                     // 加载订单数据
                     $order = Order::with(['subject', 'product'])->find($orderId);
                     if (!$order) {
                         Log::warning('分账队列中的订单不存在', ['order_id' => $orderId]);
-                        Redis::del($processingKey);
                         continue;
                     }
 
@@ -109,7 +136,6 @@ class OrderAutoRoyalty
                             'order_id' => $orderId,
                             'platform_order_no' => $order->platform_order_no
                         ]);
-                        Redis::del($processingKey);
                         continue;
                     }
 
@@ -129,6 +155,14 @@ class OrderAutoRoyalty
                             'platform_order_no' => $order->platform_order_no,
                             'reason' => $result['message'] ?? '未知原因'
                         ]);
+
+                        $this->maybeScheduleRetry(
+                            $orderId,
+                            $result['data']['royalty_id'] ?? 0,
+                            $result['data']['retryable'] ?? false,
+                            $result['data']['retry_delay'] ?? self::RETRY_DEFAULT_DELAY,
+                            1
+                        );
                     }
 
                 } catch (\Throwable $e) {
@@ -138,8 +172,7 @@ class OrderAutoRoyalty
                         'trace' => $e->getTraceAsString()
                     ]);
                 } finally {
-                    // 清除处理中标记
-                    Redis::del($processingKey);
+                    $this->releaseProcessingLock($processingKey, $lockValue ?? '');
                 }
             }
 
@@ -221,6 +254,14 @@ class OrderAutoRoyalty
                             'platform_order_no' => $order->platform_order_no,
                             'reason' => $result['message'] ?? '未知原因'
                         ]);
+
+                        $this->maybeScheduleRetry(
+                            $order->id,
+                            $result['data']['royalty_id'] ?? 0,
+                            $result['data']['retryable'] ?? false,
+                            $result['data']['retry_delay'] ?? self::RETRY_DEFAULT_DELAY,
+                            1
+                        );
                     }
 
                 } catch (\Throwable $e) {
@@ -247,6 +288,133 @@ class OrderAutoRoyalty
             Log::error('自动分账兜底任务执行失败', [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
+            ]);
+        }
+    }
+
+    /**
+     * 处理分账重试队列
+     */
+    private function processRoyaltyRetryQueue(): void
+    {
+        try {
+            $queueKey = CacheKeys::getRoyaltyRetryQueueKey();
+
+            for ($i = 0; $i < self::QUEUE_BATCH_SIZE; $i++) {
+                $taskJson = Redis::lpop($queueKey);
+                if (empty($taskJson)) {
+                    break;
+                }
+
+                $task = json_decode($taskJson, true);
+                if (!$task || empty($task['royalty_id']) || empty($task['order_id'])) {
+                    Log::channel('royalty')->warning('重试队列任务格式错误', ['task' => $taskJson]);
+                    continue;
+                }
+
+                $nextAt = $task['next_at'] ?? 0;
+                if ($nextAt > time()) {
+                    Redis::rpush($queueKey, $taskJson);
+                    break;
+                }
+
+                $retryCount = (int)($task['retry_count'] ?? 1);
+                if ($retryCount > self::RETRY_MAX_ATTEMPTS) {
+                    Log::channel('royalty')->warning('分账重试超出最大次数', [
+                        'order_id' => $task['order_id'],
+                        'royalty_id' => $task['royalty_id'],
+                        'retry_count' => $retryCount
+                    ]);
+                    continue;
+                }
+
+                $royaltyId = (int)$task['royalty_id'];
+                $result = RoyaltyService::retryRoyalty($royaltyId, 'RetryQueue');
+
+                if ($result['success']) {
+                    Log::channel('royalty')->info('分账自动重试成功', [
+                        'order_id' => $task['order_id'],
+                        'royalty_id' => $result['data']['royalty_id'] ?? $royaltyId,
+                        'retry_count' => $retryCount
+                    ]);
+                    continue;
+                }
+
+                $this->maybeScheduleRetry(
+                    (int)$task['order_id'],
+                    $result['data']['royalty_id'] ?? $royaltyId,
+                    $result['data']['retryable'] ?? false,
+                    $result['data']['retry_delay'] ?? self::RETRY_DEFAULT_DELAY,
+                    $retryCount + 1
+                );
+            }
+        } catch (\Throwable $e) {
+            Log::channel('royalty')->error('分账重试队列处理失败', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+        }
+    }
+
+    /**
+     * 根据返回结果决定是否加入重试队列
+     */
+    private function maybeScheduleRetry(
+        int $orderId,
+        int $royaltyId,
+        bool $retryable,
+        int $delaySeconds,
+        int $retryCount
+    ): void {
+        if (!$retryable || $orderId <= 0 || $royaltyId <= 0) {
+            return;
+        }
+
+        if ($retryCount > self::RETRY_MAX_ATTEMPTS) {
+            Log::channel('royalty')->warning('分账重试已达到最大次数，不再入队', [
+                'order_id' => $orderId,
+                'royalty_id' => $royaltyId,
+                'retry_count' => $retryCount
+            ]);
+            return;
+        }
+
+        $queueKey = CacheKeys::getRoyaltyRetryQueueKey();
+        $task = [
+            'order_id' => $orderId,
+            'royalty_id' => $royaltyId,
+            'retry_count' => $retryCount,
+            'next_at' => time() + max($delaySeconds, 30),
+        ];
+
+        try {
+            Redis::rpush($queueKey, json_encode($task, JSON_UNESCAPED_UNICODE));
+            Log::channel('royalty')->info('分账失败加入重试队列', $task);
+        } catch (\Throwable $e) {
+            Log::channel('royalty')->error('分账重试队列入队失败', [
+                'task' => $task,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+    /**
+     * 释放分账处理锁
+     */
+    private function releaseProcessingLock(string $processingKey, string $lockValue): void
+    {
+        if (empty($lockValue)) {
+            return;
+        }
+
+        try {
+            $currentValue = Redis::get($processingKey);
+            if ($currentValue === $lockValue) {
+                Redis::del($processingKey);
+            }
+        } catch (\Throwable $e) {
+            Log::channel('royalty')->warning('释放分账处理锁失败', [
+                'key' => $processingKey,
+                'error' => $e->getMessage()
             ]);
         }
     }

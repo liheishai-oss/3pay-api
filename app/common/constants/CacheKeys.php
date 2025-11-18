@@ -56,6 +56,25 @@ class CacheKeys
     {
         return "royalty:processing:{$orderId}";
     }
+
+    /**
+     * 分账重试队列键
+     * @return string
+     */
+    public static function getRoyaltyRetryQueueKey(): string
+    {
+        return "royalty:retry:queue";
+    }
+
+    /**
+     * 分账失败通知标记键（防止重复推送）
+     * @param int $orderId
+     * @return string
+     */
+    public static function getRoyaltyFailureNotifyKey(int $orderId): string
+    {
+        return "royalty:failure:notify:{$orderId}";
+    }
 }
 
 

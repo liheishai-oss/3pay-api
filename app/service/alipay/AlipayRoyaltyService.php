@@ -4,7 +4,11 @@ namespace app\service\alipay;
 
 use Alipay\EasySDK\Kernel\Factory;
 use Exception;
+use GuzzleHttp\Exception\ConnectException;
+use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Exception\TransferException;
 use support\Log;
+use Throwable;
 
 /**
  * 支付宝分账服务类
@@ -77,11 +81,15 @@ class AlipayRoyaltyService
                     'order_info' => $orderInfo,
                     'result_class' => get_class($result),
                 ]);
-                throw new Exception("支付宝分账响应为空");
+                return self::buildFailureResult(
+                    "支付宝分账响应为空",
+                    ['code' => 'EMPTY_BODY'],
+                    true
+                );
             }
             
             if (empty($bodyContent)) {
-                throw new Exception("支付宝分账响应为空");
+                return self::buildFailureResult("支付宝分账响应为空", ['code' => 'EMPTY_BODY'], true);
             }
             
             $response = json_decode($bodyContent, true);
@@ -92,7 +100,11 @@ class AlipayRoyaltyService
                     'json_error' => json_last_error_msg(),
                     'body_preview' => substr($bodyContent, 0, 500)
                 ]);
-                throw new Exception("支付宝分账响应解析失败: " . json_last_error_msg());
+                return self::buildFailureResult(
+                    "支付宝分账响应解析失败: " . json_last_error_msg(),
+                    ['code' => 'JSON_PARSE_ERROR', 'body_preview' => substr($bodyContent, 0, 200)],
+                    true
+                );
             }
             
             // 检查响应格式
@@ -102,7 +114,11 @@ class AlipayRoyaltyService
                     'response_keys' => array_keys($response ?? []),
                     'body_preview' => substr($bodyContent, 0, 500)
                 ]);
-                throw new Exception("分账响应格式错误");
+                return self::buildFailureResult(
+                    "分账响应格式错误",
+                    ['code' => 'INVALID_FORMAT', 'body_preview' => substr($bodyContent, 0, 200)],
+                    true
+                );
             }
             
             $settleResponse = $response['alipay_trade_order_settle_response'];
@@ -138,7 +154,7 @@ class AlipayRoyaltyService
                     $errorMessage .= " [PAYCARD_UNABLE_PAYMENT]";
                 }
                 
-                throw new Exception($errorMessage);
+                return self::buildFailureResult($errorMessage, $errorDetails);
             }
             
             Log::info("支付宝分账成功", [
@@ -159,17 +175,25 @@ class AlipayRoyaltyService
             ];
             
             
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
+            $retryable = self::isTimeoutException($e);
             Log::error("支付宝分账失败", [
                 'order_info' => $orderInfo,
                 'royalty_info' => $royaltyInfo,
-                'error' => $e->getMessage()
+                'error' => $e->getMessage(),
+                'exception' => get_class($e),
+                'retryable' => $retryable
             ]);
             
             return [
                 'success' => false,
                 'message' => '支付宝分账失败: ' . $e->getMessage(),
-                'data' => ['error' => $e->getMessage()]
+                'data' => [
+                    'error' => $e->getMessage(),
+                    'exception' => get_class($e),
+                    'retryable' => $retryable,
+                    'sub_code' => null
+                ]
             ];
         }
     }
@@ -215,6 +239,35 @@ class AlipayRoyaltyService
                 'data' => []
             ];
         }
+    }
+
+    /**
+     * 判断异常是否可重试（网络/超时）
+     */
+    private static function isTimeoutException(Throwable $e): bool
+    {
+        if ($e instanceof ConnectException || $e instanceof TransferException || $e instanceof RequestException) {
+            return true;
+        }
+
+        $message = strtolower($e->getMessage());
+        return strpos($message, 'timed out') !== false || strpos($message, 'timeout') !== false;
+    }
+
+    /**
+     * 构建统一失败返回
+     */
+    private static function buildFailureResult(string $message, array $details = [], bool $retryable = false): array
+    {
+        if (!array_key_exists('retryable', $details)) {
+            $details['retryable'] = $retryable;
+        }
+
+        return [
+            'success' => false,
+            'message' => $message,
+            'data' => $details
+        ];
     }
 }
 
