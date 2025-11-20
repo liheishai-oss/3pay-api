@@ -45,8 +45,7 @@ class AlipayRoyaltyService
                 'royalty_info' => $royaltyInfo,
                 'payment_subject' => $paymentConfig['subject_name'] ?? null,
             ];
-            Log::info('分账触发原始参数: ' . print_r($triggerParams, true));
-            self::consoleDebug('分账触发原始参数', $triggerParams);
+            Log::info('分账触发原始参数', $triggerParams);
             
             // 验证必填参数
             if (empty($royaltyInfo['payee_account'])) {
@@ -99,16 +98,14 @@ class AlipayRoyaltyService
             $textParams = [];
             
             // 使用通用接口调用转账接口（需要3个参数：API名称、textParams、bizParams）
-            Log::info('分账请求biz参数: ' . print_r($bizParams, true));
-            self::consoleDebug('分账请求biz参数', $bizParams);
+            Log::info('分账请求biz参数', $bizParams);
             
             $result = Factory::setOptions($config)
                 ->util()
                 ->generic()
                 ->execute('alipay.fund.trans.uni.transfer', $textParams, $bizParams);
             
-            Log::info('分账接口原始响应: ' . print_r($result, true));
-            self::consoleDebug('分账接口原始响应', $result);
+            Log::info('分账接口原始响应', (array) $result);
             
             // 检查响应body是否存在
             $bodyContent = null;
@@ -372,18 +369,5 @@ class AlipayRoyaltyService
         ];
     }
 
-    /**
-     * 在 CLI 控制台输出调试信息（不影响 Web 输出）
-     */
-    private static function consoleDebug(string $label, $data = null): void
-    {
-        if (PHP_SAPI === 'cli') {
-            $message = '[AlipayRoyalty] ' . $label;
-            if ($data !== null) {
-                $message .= ': ' . print_r($data, true);
-            }
-            fwrite(STDOUT, $message . PHP_EOL);
-        }
-    }
 }
 
