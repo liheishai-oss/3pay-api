@@ -108,12 +108,13 @@ class OrderController
         // 处理分账状态显示
         $list = $list->map(function ($order) {
             // 先获取支付主体对象（在 toArray() 之前，避免 subject 字段覆盖关联对象）
-            $subject = $order->subject; // 获取关联对象
+            $subject = $order->getSubjectEntity(); // 获取关联对象
             $orderArray = $order->toArray();
             
             // 计算分账状态显示文本
             $royaltyStatusText = '-';
-            $royaltyRecord = $order->royaltyRecord;
+            // 获取最新的分账记录（按 id 降序排列，获取最新的一条）
+            $royaltyRecord = $order->royaltyRecords()->orderBy('id', 'desc')->first();
             
             if ($order->pay_status == Order::PAY_STATUS_PAID) {
                 // 订单已支付
@@ -190,12 +191,13 @@ class OrderController
         }
 
         // 先获取支付主体对象（在 toArray() 之前，避免 subject 字段覆盖关联对象）
-        $subject = $order->subject; // 获取关联对象
+        $subject = $order->getSubjectEntity(); // 获取关联对象
         $orderArray = $order->toArray();
         
         // 计算分账状态显示文本（与列表逻辑一致）
         $royaltyStatusText = '-';
-        $royaltyRecord = $order->royaltyRecord;
+        // 获取最新的分账记录（按 id 降序排列，获取最新的一条）
+        $royaltyRecord = $order->royaltyRecords()->orderBy('id', 'desc')->first();
         
         if ($order->pay_status == Order::PAY_STATUS_PAID) {
             // 订单已支付

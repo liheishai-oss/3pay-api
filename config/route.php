@@ -216,6 +216,7 @@ Route::group('/api/v1/admin', function() {
         // 分账订单路由
         Route::add(['GET', 'OPTIONS'], '/order-list', [app\admin\controller\v1\SingleRoyaltyController::class, 'orderList']);
         Route::add(['GET', 'OPTIONS'], '/order-detail/{id}', [app\admin\controller\v1\SingleRoyaltyController::class, 'orderDetail']);
+        Route::add(['POST', 'OPTIONS'], '/order-manual-royalty', [app\admin\controller\v1\SingleRoyaltyController::class, 'manualRoyalty']);
         Route::add(['GET', 'OPTIONS'], '/transfer-order-list', [app\admin\controller\v1\SingleRoyaltyController::class, 'transferOrderList']);
         Route::add(['POST', 'OPTIONS'], '/transfer', [app\admin\controller\v1\SingleRoyaltyController::class, 'transfer']);
     });

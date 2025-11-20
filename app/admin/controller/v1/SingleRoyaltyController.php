@@ -2,6 +2,7 @@
 
 namespace app\admin\controller\v1;
 
+use app\common\helpers\MoneyHelper;
 use app\model\SingleRoyalty;
 use app\model\Agent;
 use app\model\TransferOrder;
@@ -9,6 +10,7 @@ use app\model\Subject;
 use app\model\SubjectCert;
 use app\service\payment\PaymentFactory;
 use app\service\alipay\AlipayService;
+use app\service\royalty\RoyaltyIntegrityService;
 use support\Request;
 use support\Db;
 
@@ -117,9 +119,6 @@ class SingleRoyaltyController
         if (empty($param['payee_account'])) {
             return error('请输入收款人账号');
         }
-        if (empty($param['payee_user_id'])) {
-            return error('请输入收款人用户ID');
-        }
 
         // 代理商自动使用自己的agent_id
         if ($isAgent) {
@@ -152,7 +151,6 @@ class SingleRoyaltyController
 
                 $singleRoyalty->payee_name = $param['payee_name'];
                 $singleRoyalty->payee_account = $param['payee_account'];
-                $singleRoyalty->payee_user_id = $param['payee_user_id'];
                 $singleRoyalty->status = $param['status'] ?? 1;
                 $singleRoyalty->save();
 
@@ -164,7 +162,6 @@ class SingleRoyaltyController
                     'agent_id' => $param['agent_id'],
                     'payee_name' => $param['payee_name'],
                     'payee_account' => $param['payee_account'],
-                    'payee_user_id' => $param['payee_user_id'],
                     'status' => $param['status'] ?? 1,
                 ]);
 
@@ -298,6 +295,18 @@ class SingleRoyaltyController
         $agentId = $searchParams['agent_id'] ?? $request->get('agent_id', '');
         $merchantId = $searchParams['merchant_id'] ?? $request->get('merchant_id', '');
 
+        $this->syncMissingRoyaltyOrders([
+            'is_agent' => $isAgent,
+            'agent_id' => $userData['agent_id'] ?? null,
+            'filter_agent_id' => $agentId,
+            'merchant_id' => $merchantId,
+            'platform_order_no' => $platformOrderNo,
+            'merchant_order_no' => $merchantOrderNo,
+            'start_time' => $startTime,
+            'end_time' => $endTime,
+            'pay_status' => $payStatus,
+        ]);
+
         // 查询有分账记录的订单
         $query = \app\model\Order::with([
             'agent', 
@@ -337,13 +346,11 @@ class SingleRoyaltyController
                 $q->where('royalty_status', $royaltyStatus);
             });
         }
-
         if ($royaltyType !== '' && $royaltyType !== null) {
             $query->whereHas('royaltyRecords', function($q) use ($royaltyType) {
                 $q->where('royalty_type', $royaltyType);
             });
         }
-
         if ($startTime) {
             $query->where('created_at', '>=', $startTime);
         }
@@ -360,25 +367,45 @@ class SingleRoyaltyController
             ->get()
             ->map(function($order) {
                 $orderData = $order->toArray();
-                // 获取最新的分账记录
-                $latestRoyalty = $order->royaltyRecords->first();
+                $subject = $order->getSubjectEntity();
+                // 获取最新的分账记录（按 id 降序排列，获取最新的一条）
+                $latestRoyalty = $order->royaltyRecords()->orderBy('id', 'desc')->first();
                 if ($latestRoyalty) {
                     $orderData['royalty_status_text'] = $latestRoyalty->getStatusText();
                     $orderData['royalty_type'] = $latestRoyalty->royalty_type;
                     $orderData['royalty_status'] = $latestRoyalty->royalty_status;
-                    $orderData['royalty_amount'] = $latestRoyalty->royalty_amount;
+                    $orderData['royalty_amount'] = $latestRoyalty->royalty_amount_yuan;
                     $orderData['royalty_time'] = $latestRoyalty->royalty_time; // 分账时间
-                    // 收款账号信息（优先显示账号，没有则显示用户ID）
-                    $orderData['payee_account'] = $latestRoyalty->payee_account ?: $latestRoyalty->payee_user_id ?: '-';
+                    // 收款账号信息：仅在分账成功后展示
+                    $orderData['payee_account'] = $latestRoyalty->royalty_status === \app\model\OrderRoyalty::ROYALTY_STATUS_SUCCESS
+                        ? ($latestRoyalty->payee_account ?: '-')
+                        : '-';
                     // 分账主体（从subject获取）
-                    $orderData['royalty_subject_name'] = $order->subject->company_name ?? '-';
-                    // 备注（从订单获取）
-                    $orderData['order_remark'] = $order->remark ?? '-';
+                    $orderData['royalty_subject_name'] = $subject ? ($subject->company_name ?? '-') : '-';
+                    // 备注：如果分账失败，显示失败原因；否则显示订单备注
+                    if ($latestRoyalty->royalty_status === \app\model\OrderRoyalty::ROYALTY_STATUS_FAILED && $latestRoyalty->royalty_error) {
+                        $orderData['order_remark'] = $latestRoyalty->royalty_error;
+                    } else {
+                        $orderData['order_remark'] = $order->remark ?? '-';
+                    }
                     // 订单号（平台订单号）
                     $orderData['order_no'] = $order->platform_order_no;
                     // 订单金额
                     $orderData['order_amount'] = $order->order_amount;
+                    // 失败原因（用于详情页显示）
+                    $orderData['royalty_error'] = $latestRoyalty->royalty_error ?? null;
                 }
+                
+                // 判断是否可以手动分账：已支付 && 未分账成功 && 满足分账条件
+                $canManualRoyalty = false;
+                if ($order->pay_status === \app\model\Order::PAY_STATUS_PAID) {
+                    if (!$order->hasRoyalty()) {
+                        $skipReason = null;
+                        $canManualRoyalty = $order->canProcessRoyalty($skipReason);
+                    }
+                }
+                $orderData['can_manual_royalty'] = $canManualRoyalty;
+                
                 return $orderData;
             })
             ->toArray();
@@ -420,17 +447,95 @@ class SingleRoyaltyController
         }
 
         $orderData = $order->toArray();
-        // 获取最新的分账记录
-        $latestRoyalty = $order->royaltyRecords->first();
+        // 获取最新的分账记录（按 id 降序排列，获取最新的一条）
+        $latestRoyalty = $order->royaltyRecords()->orderBy('id', 'desc')->first();
         if ($latestRoyalty) {
             $orderData['royalty_status_text'] = $latestRoyalty->getStatusText();
             $orderData['royalty_type'] = $latestRoyalty->royalty_type;
             $orderData['royalty_status'] = $latestRoyalty->royalty_status;
-            $orderData['royalty_amount'] = $latestRoyalty->royalty_amount;
-            $orderData['royalty_record'] = $latestRoyalty->toArray();
+            $orderData['royalty_amount'] = $latestRoyalty->royalty_amount_yuan;
+            $royaltyRecordArray = $latestRoyalty->toArray();
+            if ($latestRoyalty->royalty_status !== \app\model\OrderRoyalty::ROYALTY_STATUS_SUCCESS) {
+                $royaltyRecordArray['payee_account'] = '-';
+            }
+            $orderData['royalty_record'] = $royaltyRecordArray;
+            // 备注：如果分账失败，显示失败原因；否则显示订单备注
+            if ($latestRoyalty->royalty_status === \app\model\OrderRoyalty::ROYALTY_STATUS_FAILED && $latestRoyalty->royalty_error) {
+                $orderData['order_remark'] = $latestRoyalty->royalty_error;
+            } else {
+                $orderData['order_remark'] = $order->remark ?? '-';
+            }
+            // 失败原因（用于详情页显示）
+            $orderData['royalty_error'] = $latestRoyalty->royalty_error ?? null;
+        } else {
+            // 如果没有分账记录，显示订单备注
+            $orderData['order_remark'] = $order->remark ?? '-';
         }
 
         return success($orderData);
+    }
+
+    /**
+     * 手动触发分账
+     */
+    public function manualRoyalty(Request $request)
+    {
+        $userData = $request->userData;
+        $isAgent = ($userData['user_group_id'] ?? 0) == 3;
+        
+        $orderId = $request->post('order_id');
+        if (empty($orderId)) {
+            return error('订单ID不能为空');
+        }
+
+        // 查询订单
+        $query = \app\model\Order::with(['subject', 'product']);
+        
+        // 代理商只能操作自己的订单
+        if ($isAgent) {
+            $query->where('agent_id', $userData['agent_id']);
+        }
+        
+        $order = $query->find($orderId);
+        
+        if (!$order) {
+            return error('订单不存在或无权限操作');
+        }
+
+        // 检查订单是否已支付
+        if ($order->pay_status !== \app\model\Order::PAY_STATUS_PAID) {
+            return error('订单未支付，无法分账');
+        }
+
+        // 检查是否已分账成功
+        if ($order->hasRoyalty()) {
+            return error('订单已分账成功，无需重复分账');
+        }
+
+        // 检查是否需要分账
+        $skipReason = null;
+        if (!$order->canProcessRoyalty($skipReason)) {
+            $reasonText = [
+                'not_paid' => '订单未支付',
+                'already_royalized' => '订单已分账',
+                'subject_missing' => '订单主体不存在',
+                'royalty_disabled' => '分账主体未开启分账功能',
+            ];
+            return error($reasonText[$skipReason] ?? '订单不满足分账条件');
+        }
+
+        // 调用分账服务
+        $operatorIp = $request->getRealIp();
+        $result = \app\service\royalty\RoyaltyService::manualRoyalty($orderId, $operatorIp);
+
+        if ($result['success']) {
+            return success([
+                'royalty_amount' => $result['data']['royalty_amount'] ?? 0,
+                'royalty_id' => $result['data']['royalty_id'] ?? 0,
+            ], $result['message'] ?? '分账成功');
+        } else {
+            return error($result['message'] ?? '分账失败');
+        }
     }
 
     /**
@@ -674,6 +779,62 @@ class SingleRoyaltyController
                 'trace' => $e->getTraceAsString()
             ]);
             return error('创建转账订单失败：' . $e->getMessage());
+        }
+    }
+
+    /**
+     * 同步已支付但缺少分账记录的订单，确保能在列表中展示
+     */
+    private function syncMissingRoyaltyOrders(array $filters): void
+    {
+        try {
+            $query = \app\model\Order::with(['subject'])
+                ->where('pay_status', \app\model\Order::PAY_STATUS_PAID)
+                ->whereDoesntHave('royaltyRecords')
+                ->whereHas('subject', function ($q) {
+                    $q->where('royalty_type', '!=', Subject::ROYALTY_TYPE_NONE);
+                });
+
+            if (!empty($filters['is_agent']) && !empty($filters['agent_id'])) {
+                $query->where('agent_id', $filters['agent_id']);
+            } elseif (!empty($filters['filter_agent_id'])) {
+                $query->where('agent_id', $filters['filter_agent_id']);
+            }
+
+            if (!empty($filters['merchant_id'])) {
+                $query->where('merchant_id', $filters['merchant_id']);
+            }
+
+            if (!empty($filters['platform_order_no'])) {
+                $query->where('platform_order_no', 'like', '%' . $filters['platform_order_no'] . '%');
+            }
+
+            if (!empty($filters['merchant_order_no'])) {
+                $query->where('merchant_order_no', 'like', '%' . $filters['merchant_order_no'] . '%');
+            }
+
+            if ($filters['pay_status'] !== '' && $filters['pay_status'] !== null) {
+                $query->where('pay_status', $filters['pay_status']);
+            }
+
+            if (!empty($filters['start_time'])) {
+                $query->where('created_at', '>=', $filters['start_time']);
+            }
+
+            if (!empty($filters['end_time'])) {
+                $query->where('created_at', '<=', $filters['end_time']);
+            }
+
+            $query->orderBy('id', 'desc')
+                ->limit(200)
+                ->get()
+                ->each(function ($order) {
+                    RoyaltyIntegrityService::ensureSnapshot($order);
+                });
+        } catch (\Throwable $e) {
+            \support\Log::warning('同步缺少分账记录的订单失败', [
+                'error' => $e->getMessage(),
+            ]);
         }
     }
 }

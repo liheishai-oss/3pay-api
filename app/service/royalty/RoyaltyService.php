@@ -71,7 +71,7 @@ class RoyaltyService
             }
 
             // 3. 加载主体信息
-            $subject = $order->subject;
+            $subject = $order->getSubjectEntity();
             if (!$subject) {
                 return [
                     'success' => false,
@@ -88,7 +88,11 @@ class RoyaltyService
                 return [
                     'success' => true,
                     'message' => '订单不分账',
-                    'data' => ['royalty_amount' => 0, 'reason' => 'no_royalty']
+                    'data' => [
+                        'royalty_amount' => MoneyHelper::convertToYuan($royaltyData['royalty_amount']),
+                        'subject_amount' => MoneyHelper::convertToYuan($royaltyData['subject_amount']),
+                        'reason' => 'no_royalty'
+                    ]
                 ];
             }
 
@@ -108,7 +112,7 @@ class RoyaltyService
                     'payee_id' => $royaltyData['payee_id'] ?? null,
                     'payee_name' => $royaltyData['payee_name'] ?? '',
                     'payee_account' => $royaltyData['payee_account'] ?? '',
-                    'payee_user_id' => $royaltyData['payee_user_id'] ?? '',
+                    'payee_user_id' => $royaltyData['payee_account'] ?? '', // 使用账号作为用户ID
                     'royalty_amount' => $royaltyData['royalty_amount'],
                     'royalty_status' => OrderRoyalty::ROYALTY_STATUS_PENDING,
                 ]);
@@ -124,8 +128,8 @@ class RoyaltyService
                     [
                         'action' => '开始处理分账',
                         'royalty_type' => $subject->royalty_type,
-                        'royalty_amount' => $royaltyData['royalty_amount'],
-                        'subject_amount' => $royaltyData['subject_amount'],
+                        'royalty_amount' => MoneyHelper::convertToYuan($royaltyData['royalty_amount']),
+                        'subject_amount' => MoneyHelper::convertToYuan($royaltyData['subject_amount']),
                         'payee_name' => $royaltyData['payee_name'] ?? '',
                         'payee_account' => $royaltyData['payee_account'] ?? '',
                         'operator_ip' => $operatorIp
@@ -140,8 +144,8 @@ class RoyaltyService
                 throw new Exception("订单缺少支付宝交易号，无法进行分账");
             }
 
-            if (empty($royaltyData['payee_user_id'])) {
-                throw new Exception("分账收款人支付宝用户ID为空，无法进行分账");
+            if (empty($royaltyData['payee_account'])) {
+                throw new Exception("分账收款人账号为空，无法进行分账");
             }
 
             // 7. 调用支付宝分账接口
@@ -161,8 +165,8 @@ class RoyaltyService
                     'order_amount' => $order->order_amount,
                 ],
                 [
-                    'royalty_amount' => $royaltyData['royalty_amount'],
-                    'payee_user_id' => $royaltyData['payee_user_id'],
+                    'royalty_amount' => MoneyHelper::convertToYuan($royaltyData['royalty_amount']),
+                    'payee_account' => $royaltyData['payee_account'],
                     'payee_name' => $royaltyData['payee_name'] ?? '',
                 ],
                 $paymentConfig
@@ -322,7 +326,7 @@ class RoyaltyService
                 '节点34-分账结果',
                 [
                     'action' => $alipayResult['success'] ? '分账成功' : '分账失败',
-                    'royalty_amount' => $royaltyData['royalty_amount'],
+                    'royalty_amount' => MoneyHelper::convertToYuan($royaltyData['royalty_amount']),
                     'alipay_royalty_no' => $royaltyRecord->alipay_royalty_no,
                     'error' => $alipayResult['success'] ? null : $alipayResult['message'],
                     'operator_ip' => $operatorIp
@@ -340,8 +344,8 @@ class RoyaltyService
                 'message' => $alipayResult['success'] ? '分账成功' : ('分账失败: ' . ($alipayResult['message'] ?? '未知错误')),
                 'data' => [
                     'royalty_id' => $royaltyRecord->id,
-                    'royalty_amount' => $royaltyData['royalty_amount'],
-                    'subject_amount' => $royaltyData['subject_amount'],
+                    'royalty_amount' => MoneyHelper::convertToYuan($royaltyData['royalty_amount']),
+                    'subject_amount' => MoneyHelper::convertToYuan($royaltyData['subject_amount']),
                     'alipay_royalty_no' => $royaltyRecord->alipay_royalty_no,
                     'alipay_result' => $alipayResult,
                     'retryable' => $retryable,
@@ -485,13 +489,15 @@ class RoyaltyService
             case Subject::ROYALTY_TYPE_NONE:
                 // 不分账
                 return [
-                    'royalty_amount' => '0.00',
-                    'subject_amount' => MoneyHelper::convertToYuan($orderAmountCent),
+                    'royalty_amount' => 0,
+                    'subject_amount' => $orderAmountCent,
                 ];
                 
             case Subject::ROYALTY_TYPE_SINGLE:
-                // 单笔分账：按比例分账
-                $royaltyAmountCent = (int) round($orderAmountCent * ($royaltyRate / 100));
+                // 单笔分账：订单金额先扣除千分之六手续费，再按百分比进行分配
+                $handlingFeeCent = (int) floor($orderAmountCent * 6 / 1000); // 0.6%，向下取整
+                $netAmountCent = max($orderAmountCent - $handlingFeeCent, 0);
+                $royaltyAmountCent = (int) floor($netAmountCent * $royaltyRate / 100);
                 $subjectAmountCent = $orderAmountCent - $royaltyAmountCent;
                 
                 $singleRoyalty = self::getEnabledRoyaltyAccount($subject->agent_id);
@@ -507,13 +513,12 @@ class RoyaltyService
                 }
                     
                 return [
-                    'royalty_amount' => MoneyHelper::convertToYuan($royaltyAmountCent),
-                    'subject_amount' => MoneyHelper::convertToYuan($subjectAmountCent),
+                    'royalty_amount' => $royaltyAmountCent,
+                    'subject_amount' => $subjectAmountCent,
                     'payee_type' => OrderRoyalty::PAYEE_TYPE_SINGLE,
                     'payee_id' => $singleRoyalty->id,
                     'payee_name' => $singleRoyalty->payee_name,
                     'payee_account' => $singleRoyalty->payee_account,
-                    'payee_user_id' => $singleRoyalty->payee_user_id,
                 ];
                 
             case Subject::ROYALTY_TYPE_MERCHANT:
@@ -529,7 +534,9 @@ class RoyaltyService
                 
                 // 假设商户收款90%，平台（主体）收款10%（可根据实际业务调整）
                 $merchantRate = 90;
-                $royaltyAmountCent = (int) round($orderAmountCent * ((100 - $merchantRate) / 100));
+                $handlingFeeCent = (int) floor($orderAmountCent * 6 / 1000);
+                $netAmountCent = max($orderAmountCent - $handlingFeeCent, 0);
+                $royaltyAmountCent = (int) floor($netAmountCent * $royaltyRate / 100);
                 $subjectAmountCent = $orderAmountCent - $royaltyAmountCent;
                 $singleRoyalty = self::getEnabledRoyaltyAccount($subject->agent_id);
                 
@@ -544,13 +551,12 @@ class RoyaltyService
                 }
                 
                 return [
-                    'royalty_amount' => MoneyHelper::convertToYuan($royaltyAmountCent),
-                    'subject_amount' => MoneyHelper::convertToYuan($subjectAmountCent),
+                    'royalty_amount' => $royaltyAmountCent,
+                    'subject_amount' => $subjectAmountCent,
                     'payee_type' => OrderRoyalty::PAYEE_TYPE_MERCHANT,
                     'payee_id' => $merchant->id,
                     'payee_name' => $singleRoyalty->payee_name,
                     'payee_account' => $singleRoyalty->payee_account,
-                    'payee_user_id' => $singleRoyalty->payee_user_id,
                 ];
                 
             default:
@@ -570,18 +576,32 @@ class RoyaltyService
             throw new Exception('主体未绑定代理商，无法获取分账收款账号');
         }
 
+        // 先查询是否有该代理商的分账账号（不管状态）
+        $allRoyaltyAccounts = SingleRoyalty::where('agent_id', $agentId)->get();
+        
+        if ($allRoyaltyAccounts->isEmpty()) {
+            throw new Exception("代理商 {$agentId} 未配置分账收款账号，请先在【单笔分账管理】中添加分账账号");
+        }
+
+        // 查询启用状态的分账账号
         $singleRoyalty = SingleRoyalty::where('agent_id', $agentId)
             ->where('status', SingleRoyalty::STATUS_ENABLED)
             ->first();
 
         if (!$singleRoyalty) {
-            throw new Exception("代理商 {$agentId} 未配置启用状态的分账收款账号");
+            // 检查是否有禁用状态的账号
+            $disabledAccounts = SingleRoyalty::where('agent_id', $agentId)
+                ->where('status', SingleRoyalty::STATUS_DISABLED)
+                ->count();
+            
+            if ($disabledAccounts > 0) {
+                throw new Exception("代理商 {$agentId} 有 {$disabledAccounts} 个分账账号，但都处于禁用状态，请在【单笔分账管理】中启用分账账号");
+            } else {
+                throw new Exception("代理商 {$agentId} 未配置启用状态的分账收款账号，请先在【单笔分账管理】中添加并启用分账账号");
+            }
         }
 
         $missingFields = [];
-        if (empty($singleRoyalty->payee_user_id)) {
-            $missingFields[] = 'payee_user_id';
-        }
         if (empty($singleRoyalty->payee_account)) {
             $missingFields[] = 'payee_account';
         }
@@ -591,7 +611,7 @@ class RoyaltyService
 
         if (!empty($missingFields)) {
             $fieldText = implode('/', $missingFields);
-            throw new Exception("代理商 {$agentId} 分账收款账号信息不完整：缺少 {$fieldText}");
+            throw new Exception("代理商 {$agentId} 分账收款账号信息不完整：缺少 {$fieldText}，请在【单笔分账管理】中完善账号信息");
         }
 
         return $singleRoyalty;
@@ -604,6 +624,12 @@ class RoyaltyService
     {
         if (isset($errorData['retryable'])) {
             return (bool)$errorData['retryable'];
+        }
+
+        // 特殊错误码：isv.insufficient-isv-permissions 不可重试，只能人工处理
+        $specialErrorCode = 'isv.insufficient-isv-permissions';
+        if ($subCode && strtolower($subCode) === strtolower($specialErrorCode)) {
+            return false;
         }
 
         if ($subCode) {
@@ -673,20 +699,56 @@ HTML;
         string $errorMessage,
         array $royaltyData
     ): void {
-        $notifyKey = CacheKeys::getRoyaltyFailureNotifyKey($order->id);
-        $shouldNotify = false;
+        $subject = $order->getSubjectEntity();
+        $subjectId = $subject ? $subject->id : 0;
+        
+        // 特殊错误码：isv.insufficient-isv-permissions - 同一主体只推送一次
+        $specialErrorCode = 'isv.insufficient-isv-permissions';
+        $isSpecialError = $subCode && strtolower($subCode) === strtolower($specialErrorCode);
+        
+        if ($isSpecialError && $subjectId > 0) {
+            // 使用主体ID + 错误码作为缓存键，确保同一主体只推送一次
+            $notifyKey = CacheKeys::getSubjectErrorNotifyKey($subjectId, $specialErrorCode);
+            $shouldNotify = false;
+            
+            try {
+                // 永久标记（不过期），确保同一主体只推送一次
+                $shouldNotify = Redis::set($notifyKey, 1, 'NX');
+            } catch (\Throwable $e) {
+                Log::channel('royalty')->warning('记录主体错误通知状态失败', [
+                    'subject_id' => $subjectId,
+                    'error_code' => $specialErrorCode,
+                    'error' => $e->getMessage()
+                ]);
+            }
+            
+            if (!$shouldNotify) {
+                // 已经推送过，不再推送
+                Log::channel('royalty')->info('主体错误已推送过，跳过推送', [
+                    'subject_id' => $subjectId,
+                    'error_code' => $specialErrorCode,
+                    'order_id' => $order->id,
+                    'platform_order_no' => $order->platform_order_no,
+                ]);
+                return;
+            }
+        } else {
+            // 普通错误：使用订单ID作为缓存键
+            $notifyKey = CacheKeys::getRoyaltyFailureNotifyKey($order->id);
+            $shouldNotify = false;
 
-        try {
-            $shouldNotify = Redis::set($notifyKey, 1, 'EX', self::FAILURE_NOTIFY_TTL, 'NX');
-        } catch (\Throwable $e) {
-            Log::channel('royalty')->warning('记录分账失败通知状态失败', [
-                'order_id' => $order->id,
-                'error' => $e->getMessage()
-            ]);
-        }
+            try {
+                $shouldNotify = Redis::set($notifyKey, 1, 'EX', self::FAILURE_NOTIFY_TTL, 'NX');
+            } catch (\Throwable $e) {
+                Log::channel('royalty')->warning('记录分账失败通知状态失败', [
+                    'order_id' => $order->id,
+                    'error' => $e->getMessage()
+                ]);
+            }
 
-        if (!$shouldNotify) {
-            return;
+            if (!$shouldNotify) {
+                return;
+            }
         }
 
         $message = self::buildRoyaltyFailureMessage($order, $royaltyRecord, $subCode, $errorMessage, $royaltyData);
@@ -700,14 +762,22 @@ HTML;
             ]
         );
 
-        Log::channel('royalty')->warning('首次分账失败，已推送失败原因', [
+        $logData = [
             'order_id' => $order->id,
             'platform_order_no' => $order->platform_order_no,
             'royalty_id' => $royaltyRecord->id,
             'queue_message_id' => $queueMessage->id ?? null,
             'sub_code' => $subCode,
             'error_message' => $errorMessage,
-        ]);
+        ];
+        
+        if ($isSpecialError && $subjectId > 0) {
+            $logData['subject_id'] = $subjectId;
+            $logData['notify_type'] = 'subject_error_once';
+            Log::channel('royalty')->warning('主体特殊错误首次推送（后续不再推送）', $logData);
+        } else {
+            Log::channel('royalty')->warning('首次分账失败，已推送失败原因', $logData);
+        }
     }
 
     /**
@@ -720,13 +790,14 @@ HTML;
         string $errorMessage,
         array $royaltyData
     ): string {
-        $subject = $order->subject;
+        $subject = $order->getSubjectEntity();
         $subjectName = $subject ? ($subject->company_name ?? "主体ID: {$subject->id}") : '未知主体';
         $merchantOrderNo = $order->merchant_order_no ?: '-';
         $time = date('Y-m-d H:i:s');
         $reason = $errorMessage ?: '未知错误';
         $subCodeText = $subCode ?: 'UNKNOWN';
-        $royaltyAmount = $royaltyData['royalty_amount'] ?? $royaltyRecord->royalty_amount;
+        $royaltyAmountCent = $royaltyData['royalty_amount'] ?? $royaltyRecord->royalty_amount ?? 0;
+        $royaltyAmount = MoneyHelper::convertToYuan($royaltyAmountCent);
 
         $message = <<<HTML
 ⚠️ <b>订单分账失败</b>

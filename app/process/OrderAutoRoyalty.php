@@ -7,6 +7,7 @@ use Workerman\Crontab\Crontab;
 use app\model\Order;
 use app\model\OrderRoyalty;
 use app\service\royalty\RoyaltyService;
+use app\service\royalty\RoyaltyIntegrityService;
 use app\common\constants\CacheKeys;
 use support\Log;
 use support\Redis;
@@ -34,6 +35,11 @@ class OrderAutoRoyalty
     const MINUTES_AFTER_PAY = 5;
 
     /**
+     * 最大自动重试次数（累计失败5次后停止自动分账，只能人工触发）
+     */
+    const MAX_AUTO_RETRY_COUNT = 5;
+
+    /**
      * 队列处理锁的过期时间（秒）
      */
     const PROCESS_LOCK_TTL = 60;
@@ -49,6 +55,16 @@ class OrderAutoRoyalty
     const RETRY_DEFAULT_DELAY = 300;
 
     /**
+     * 待支付任务默认重新入队延迟（秒）
+     */
+    const PENDING_REQUEUE_DELAY = 30;
+
+    /**
+     * 待支付任务最多补偿次数
+     */
+    const PENDING_MAX_ATTEMPTS = 5;
+
+    /**
      * Worker启动时执行
      */
     public function onWorkerStart(Worker $worker)
@@ -59,7 +75,7 @@ class OrderAutoRoyalty
         });
 
         // 每10分钟执行一次兜底扫描（防止队列丢失的情况）
-        new Crontab('*/10 * * * *', function () {
+        new Crontab('0 */10 * * * *', function () {
             $this->processAutoRoyalty();
         });
 
@@ -68,12 +84,168 @@ class OrderAutoRoyalty
             $this->processRoyaltyRetryQueue();
         });
 
+        // 每15秒处理一次待支付/延迟补偿队列
+        new Crontab('*/15 * * * * *', function () {
+            $this->processRoyaltyPendingQueue();
+        });
+
         Log::info('订单自动分账任务已启动', [
             'queue_interval' => '每1秒',
             'fallback_interval' => '每10分钟',
+            'pending_interval' => '每15秒',
             'queue_batch_size' => self::QUEUE_BATCH_SIZE,
             'fallback_batch_size' => self::BATCH_SIZE
         ]);
+    }
+
+    /**
+     * 处理暂不满足分账条件的订单（例如支付状态未更新）
+     */
+    private function handleRoyaltyPrerequisiteMiss(Order $order, array $orderData, string $reason): void
+    {
+        $context = [
+            'order_id' => $order->id,
+            'platform_order_no' => $order->platform_order_no,
+            'reason' => $reason,
+        ];
+
+        $markFailed = false;
+        $failedMessage = '';
+
+        switch ($reason) {
+            case 'not_paid':
+                Log::channel('royalty')->info('订单支付状态尚未更新为已支付，进入待支付补偿队列', $context);
+                $this->schedulePendingRoyalty($order, $orderData, $reason);
+                break;
+            case 'royalty_disabled':
+                Log::channel('royalty')->warning('分账主体未开启分账功能，跳过处理', $context);
+                $markFailed = true;
+                $failedMessage = '分账主体未开启分账功能';
+                break;
+            case 'subject_missing':
+                Log::channel('royalty')->warning('订单主体不存在或不可用，跳过处理', $context);
+                $markFailed = true;
+                $failedMessage = '订单主体不存在或已被禁用';
+                break;
+            case 'already_royalized':
+                Log::channel('royalty')->info('订单已存在成功分账记录，跳过', $context);
+                break;
+            default:
+                Log::channel('royalty')->debug('订单暂未满足分账条件', $context);
+                $markFailed = true;
+                $failedMessage = '分账前置条件未满足';
+        }
+
+        if ($markFailed) {
+            RoyaltyIntegrityService::markAsFailed($order, $reason, $failedMessage);
+        }
+    }
+
+    /**
+     * 将待支付订单加入补偿队列，等待再次触发
+     */
+    private function schedulePendingRoyalty(Order $order, array $orderData, string $reason, int $delaySeconds = self::PENDING_REQUEUE_DELAY): void
+    {
+        $orderId = (int)$order->id;
+        if ($orderId <= 0) {
+            return;
+        }
+
+        $pendingKey = CacheKeys::getRoyaltyPendingQueueKey();
+        $pendingDataKey = CacheKeys::getRoyaltyPendingDataKey();
+        $nextAt = time() + max($delaySeconds, 10);
+
+        try {
+            $payload = Redis::hget($pendingDataKey, (string)$orderId);
+            $attempts = 0;
+            if ($payload) {
+                $decoded = json_decode($payload, true);
+                $attempts = (int)($decoded['pending_attempts'] ?? 0);
+            }
+            $attempts++;
+
+            if ($attempts > self::PENDING_MAX_ATTEMPTS) {
+                Log::channel('royalty')->warning('待支付分账补偿超过最大次数，停止入队', [
+                    'order_id' => $orderId,
+                    'platform_order_no' => $order->platform_order_no,
+                    'reason' => $reason,
+                ]);
+                Redis::hdel($pendingDataKey, (string)$orderId);
+                Redis::zrem($pendingKey, (string)$orderId);
+                return;
+            }
+
+            $orderData['order_id'] = $orderId;
+            $orderData['pending_attempts'] = $attempts;
+            $orderData['pending_reason'] = $reason;
+            $orderData['scheduled_at'] = $nextAt;
+
+            Redis::hset($pendingDataKey, (string)$orderId, json_encode($orderData, JSON_UNESCAPED_UNICODE));
+            Redis::zadd($pendingKey, $nextAt, (string)$orderId);
+        } catch (\Throwable $e) {
+            Log::channel('royalty')->error('待支付分账补偿调度失败', [
+                'order_id' => $orderId,
+                'platform_order_no' => $order->platform_order_no,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * 处理待支付/延迟补偿队列
+     */
+    private function processRoyaltyPendingQueue(): void
+    {
+        try {
+            $pendingKey = CacheKeys::getRoyaltyPendingQueueKey();
+            $pendingDataKey = CacheKeys::getRoyaltyPendingDataKey();
+            $queueKey = CacheKeys::getRoyaltyQueueKey();
+
+            $dueOrderIds = Redis::zrangebyscore(
+                $pendingKey,
+                '-inf',
+                time(),
+                ['limit' => [0, self::QUEUE_BATCH_SIZE]]
+            );
+
+            if (empty($dueOrderIds)) {
+                return;
+            }
+
+            foreach ($dueOrderIds as $orderIdStr) {
+                Redis::zrem($pendingKey, $orderIdStr);
+                $payload = Redis::hget($pendingDataKey, $orderIdStr);
+                Redis::hdel($pendingDataKey, $orderIdStr);
+
+                $orderPayload = [
+                    'order_id' => (int)$orderIdStr,
+                    'operator_ip' => 'SYSTEM',
+                    'operator_agent' => 'RoyaltyPending',
+                    'timestamp' => time()
+                ];
+
+                if (is_string($payload)) {
+                    $decoded = json_decode($payload, true);
+                    if (is_array($decoded)) {
+                        $orderPayload = array_merge($orderPayload, [
+                            'operator_ip' => $decoded['operator_ip'] ?? $orderPayload['operator_ip'],
+                            'operator_agent' => $decoded['operator_agent'] ?? $orderPayload['operator_agent'],
+                        ]);
+                    }
+                }
+
+                Redis::lpush($queueKey, json_encode($orderPayload, JSON_UNESCAPED_UNICODE));
+                Log::channel('royalty')->info('待支付订单补偿重新入队', [
+                    'order_id' => (int)$orderIdStr,
+                    'payload' => $orderPayload
+                ]);
+            }
+        } catch (\Throwable $e) {
+            Log::channel('royalty')->error('待支付分账补偿队列处理失败', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+        }
     }
 
     /**
@@ -130,11 +302,22 @@ class OrderAutoRoyalty
                         continue;
                     }
 
-                    // 检查是否需要分账
-                    if (!$order->needsRoyalty()) {
-                        Log::debug('订单不需要分账', [
+                    // 检查分账前置条件
+                    $skipReason = null;
+                    if (!$order->canProcessRoyalty($skipReason)) {
+                        $this->handleRoyaltyPrerequisiteMiss($order, $orderData, $skipReason ?: 'unknown');
+                        continue;
+                    }
+
+                    // 检查累计失败次数，超过5次则跳过自动分账（只能人工触发）
+                    $failureCount = OrderRoyalty::getFailureCount($orderId);
+                    if ($failureCount >= self::MAX_AUTO_RETRY_COUNT) {
+                        Log::channel('royalty')->warning('订单累计失败次数已达上限，跳过自动分账', [
                             'order_id' => $orderId,
-                            'platform_order_no' => $order->platform_order_no
+                            'platform_order_no' => $order->platform_order_no,
+                            'failure_count' => $failureCount,
+                            'max_auto_retry' => self::MAX_AUTO_RETRY_COUNT,
+                            'note' => '请通过后台手动触发分账'
                         ]);
                         continue;
                     }
@@ -231,9 +414,31 @@ class OrderAutoRoyalty
 
             foreach ($orders as $order) {
                 try {
+                    RoyaltyIntegrityService::ensureSnapshot($order);
+
                     // 检查是否需要分账
-                    if (!$order->needsRoyalty()) {
+                    $skipReason = null;
+                    if (!$order->canProcessRoyalty($skipReason)) {
                         $skippedCount++;
+                        RoyaltyIntegrityService::markAsFailed(
+                            $order,
+                            $skipReason ?: 'unknown',
+                            '兜底分账前置条件未满足'
+                        );
+                        continue;
+                    }
+
+                    // 检查累计失败次数，超过5次则跳过自动分账（只能人工触发）
+                    $failureCount = OrderRoyalty::getFailureCount($order->id);
+                    if ($failureCount >= self::MAX_AUTO_RETRY_COUNT) {
+                        $skippedCount++;
+                        Log::channel('royalty')->warning('订单累计失败次数已达上限，跳过兜底自动分账', [
+                            'order_id' => $order->id,
+                            'platform_order_no' => $order->platform_order_no,
+                            'failure_count' => $failureCount,
+                            'max_auto_retry' => self::MAX_AUTO_RETRY_COUNT,
+                            'note' => '请通过后台手动触发分账'
+                        ]);
                         continue;
                     }
 
@@ -328,6 +533,20 @@ class OrderAutoRoyalty
                     continue;
                 }
 
+                // 检查累计失败次数，超过5次则跳过自动重试（只能人工触发）
+                $orderId = (int)$task['order_id'];
+                $failureCount = OrderRoyalty::getFailureCount($orderId);
+                if ($failureCount >= self::MAX_AUTO_RETRY_COUNT) {
+                    Log::channel('royalty')->warning('订单累计失败次数已达上限，跳过自动重试', [
+                        'order_id' => $orderId,
+                        'royalty_id' => $task['royalty_id'],
+                        'failure_count' => $failureCount,
+                        'max_auto_retry' => self::MAX_AUTO_RETRY_COUNT,
+                        'note' => '请通过后台手动触发分账'
+                    ]);
+                    continue;
+                }
+
                 $royaltyId = (int)$task['royalty_id'];
                 $result = RoyaltyService::retryRoyalty($royaltyId, 'RetryQueue');
 
@@ -367,6 +586,19 @@ class OrderAutoRoyalty
         int $retryCount
     ): void {
         if (!$retryable || $orderId <= 0 || $royaltyId <= 0) {
+            return;
+        }
+
+        // 检查累计失败次数，超过5次则不再加入重试队列（只能人工触发）
+        $failureCount = OrderRoyalty::getFailureCount($orderId);
+        if ($failureCount >= self::MAX_AUTO_RETRY_COUNT) {
+            Log::channel('royalty')->warning('订单累计失败次数已达上限，不再加入重试队列', [
+                'order_id' => $orderId,
+                'royalty_id' => $royaltyId,
+                'failure_count' => $failureCount,
+                'max_auto_retry' => self::MAX_AUTO_RETRY_COUNT,
+                'note' => '请通过后台手动触发分账'
+            ]);
             return;
         }
 
