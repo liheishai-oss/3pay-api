@@ -15,6 +15,7 @@ use app\common\helpers\IpWhitelistHelper;
 use app\service\payment\PaymentFactory;
 use app\service\OrderLogService;
 use app\service\OrderAlertService;
+use app\utils\QrCodeHelper;
 use support\Request;
 use support\Db;
 use support\Redis;
@@ -637,11 +638,11 @@ class OrderController
         // 第一阶段：尝试使用Redis缓存防重
         $redisAvailable = true;
         for ($i = 0; $i < OrderConstants::ORDER_NUMBER_RETRY_LIMIT; $i++) {
-            // 生成4位随机大写字母数字：C4CA
-            $randomStr = strtoupper(substr(bin2hex(random_bytes(4)), 0, 8));
+            // 生成4位随机大写字母数字（再减少2位）
+            $randomStr = strtoupper(substr(bin2hex(random_bytes(2)), 0, 4));
             
-            // 订单号格式：BY{代理商ID}{日期YYYYMMDD}{时间HHMMSS}{随机8位}
-            // 例如：BY120251022211850C4CA7731
+            // 订单号格式：BY{代理商ID}{日期YYYYMMDD}{时间HHMMSS}{随机4位}
+            // 例如：BY120251022211850C4CA
             $orderNumber = $prefix . $agentId . $date . $time . $randomStr;
             $key = CacheKeys::getOrderCommitLog($orderNumber);
             
@@ -664,7 +665,7 @@ class OrderController
         
         // 第二阶段：Redis不可用时的降级方案 - 使用数据库查询防重
         for ($i = 0; $i < OrderConstants::ORDER_NUMBER_RETRY_LIMIT; $i++) {
-            $randomStr = strtoupper(substr(bin2hex(random_bytes(4)), 0, 8));
+            $randomStr = strtoupper(substr(bin2hex(random_bytes(2)), 0, 4));
             $fallbackNumber = $prefix . $agentId . $date . $time . $randomStr;
             
             // 检查数据库中是否存在该订单号
@@ -1014,23 +1015,43 @@ class OrderController
                 $paymentUrl .= '&payment_type=' . urlencode($params['payment_type']);
             }
 
+            // 生成二维码（Base64格式）
+            $qrCodeBase64 = '';
+            try {
+                $qrCodeBase64 = QrCodeHelper::generateOrderQrCode($paymentUrl, 300);
+                Log::info('订单二维码生成成功', [
+                    'platform_order_no' => $order->platform_order_no,
+                    'payment_url_length' => strlen($paymentUrl),
+                    'qr_code_base64_length' => strlen($qrCodeBase64)
+                ]);
+            } catch (\Exception $e) {
+                // 二维码生成失败不影响订单创建，只记录警告日志
+                Log::warning('订单二维码生成失败，但继续创建订单', [
+                    'platform_order_no' => $order->platform_order_no,
+                    'error' => $e->getMessage()
+                ]);
+            }
+
             // 记录订单创建日志
-            Log::info('订单创建完成，生成支付地址', [
+            Log::info('订单创建完成，生成支付地址和二维码', [
                 'platform_order_no' => $order->platform_order_no,
                 'payment_url' => $paymentUrl,
                 'product_code' => $params['product_code'],
                 'subject_id' => $subject->id,
                 'amount' => $order->order_amount,
-                'payment_type' => $params['payment_type'] ?? 'auto'
+                'payment_type' => $params['payment_type'] ?? 'auto',
+                'has_qr_code' => !empty($qrCodeBase64)
             ]);
 
             return [
                 'payment_url' => $paymentUrl,
                 'payment_method' => $params['payment_type'] ?? ($product->paymentType->product_code ?? ''),
-                'qr_code' => '',  // 不在此处生成二维码，由支付页面生成
+                'qr_code' => $qrCodeBase64,  // Base64格式的二维码图片
+                'qr_code_url' => $paymentUrl,  // 二维码内容（支付URL）
                 'payment_info' => [
                     'order_number' => $order->platform_order_no,
-                    'payment_url' => $paymentUrl
+                    'payment_url' => $paymentUrl,
+                    'qr_code_base64' => $qrCodeBase64
                 ]
             ];
 
@@ -1045,7 +1066,8 @@ class OrderController
             return [
                 'error' => true,
                 'message' => '支付信息构建失败: ' . $e->getMessage(),
-                'payment_url' => "https://pay.example.com/error?order_no=" . $order->platform_order_no
+                'payment_url' => "https://pay.example.com/error?order_no=" . $order->platform_order_no,
+                'qr_code' => ''
             ];
         }
     }

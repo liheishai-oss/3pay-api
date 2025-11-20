@@ -165,6 +165,7 @@ Route::group('/api/v1/admin', function() {
         Route::add(['POST', 'OPTIONS'], '/switch', [app\admin\controller\v1\SubjectController::class, 'switch']);
         Route::add(['GET', 'OPTIONS'], '/agent-list', [app\admin\controller\v1\SubjectController::class, 'getAgentList']);
         Route::add(['GET', 'OPTIONS'], '/product-list', [app\admin\controller\v1\SubjectController::class, 'getProductList']);
+        Route::add(['GET', 'OPTIONS'], '/balance/{id}', [app\admin\controller\v1\SubjectController::class, 'queryBalance']);
     });
 
     // 主体支付类型管理路由
@@ -212,6 +213,12 @@ Route::group('/api/v1/admin', function() {
         Route::add(['POST', 'OPTIONS'], '/delete', [app\admin\controller\v1\SingleRoyaltyController::class, 'destroy']);
         Route::add(['POST', 'OPTIONS'], '/switch', [app\admin\controller\v1\SingleRoyaltyController::class, 'switch']);
         Route::add(['GET', 'OPTIONS'], '/agent-list', [app\admin\controller\v1\SingleRoyaltyController::class, 'getAgentList']);
+        // 分账订单路由
+        Route::add(['GET', 'OPTIONS'], '/order-list', [app\admin\controller\v1\SingleRoyaltyController::class, 'orderList']);
+        Route::add(['GET', 'OPTIONS'], '/order-detail/{id}', [app\admin\controller\v1\SingleRoyaltyController::class, 'orderDetail']);
+        Route::add(['POST', 'OPTIONS'], '/order-manual-royalty', [app\admin\controller\v1\SingleRoyaltyController::class, 'manualRoyalty']);
+        Route::add(['GET', 'OPTIONS'], '/transfer-order-list', [app\admin\controller\v1\SingleRoyaltyController::class, 'transferOrderList']);
+        Route::add(['POST', 'OPTIONS'], '/transfer', [app\admin\controller\v1\SingleRoyaltyController::class, 'transfer']);
     });
 
     // 商户管理路由

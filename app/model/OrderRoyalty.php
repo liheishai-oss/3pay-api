@@ -2,6 +2,7 @@
 
 namespace app\model;
 
+use app\common\helpers\MoneyHelper;
 use support\Model;
 
 /**
@@ -14,13 +15,13 @@ use support\Model;
  * @property string $royalty_mode 分账模式：normal/master_sub
  * @property float $royalty_rate 分账比例（百分比）
  * @property int $subject_id 主体ID
- * @property float $subject_amount 主体收款金额
+ * @property int $subject_amount 主体收款金额（分）
  * @property string $payee_type 收款人类型：agent/merchant/single
  * @property int $payee_id 收款人ID
  * @property string $payee_name 收款人名称
  * @property string $payee_account 收款人账号
  * @property string $payee_user_id 收款人支付宝用户ID
- * @property float $royalty_amount 分账金额
+ * @property int $royalty_amount 分账金额（分）
  * @property int $royalty_status 分账状态：0=待分账, 1=分账中, 2=分账成功, 3=分账失败
  * @property string $royalty_time 分账时间
  * @property string $royalty_error 分账失败原因
@@ -64,12 +65,17 @@ class OrderRoyalty extends Model
         'subject_id' => 'integer',
         'payee_id' => 'integer',
         'royalty_rate' => 'float',
-        'subject_amount' => 'decimal:2',
-        'royalty_amount' => 'decimal:2',
+        'subject_amount' => 'integer',
+        'royalty_amount' => 'integer',
         'royalty_status' => 'integer',
-        'created_at' => 'datetime',
-        'updated_at' => 'datetime',
-        'royalty_time' => 'datetime',
+        'created_at' => 'datetime:Y-m-d H:i:s',
+        'updated_at' => 'datetime:Y-m-d H:i:s',
+        'royalty_time' => 'datetime:Y-m-d H:i:s',
+    ];
+
+    protected $appends = [
+        'subject_amount_yuan',
+        'royalty_amount_yuan',
     ];
 
     // 分账状态常量
@@ -170,11 +176,27 @@ class OrderRoyalty extends Model
     }
 
     /**
-     * 时间格式转换 - 解决新版ORM时间格式问题
+     * 获取订单的累计失败次数
+     * @param int $orderId 订单ID
+     * @return int 失败次数
      */
-    protected function serializeDate(\DateTimeInterface $date)
+    public static function getFailureCount(int $orderId): int
     {
-        return $date->format('Y-m-d H:i:s');
+        return self::where('order_id', $orderId)
+            ->where('royalty_status', self::ROYALTY_STATUS_FAILED)
+            ->count();
+    }
+
+    public function getSubjectAmountYuanAttribute(): string
+    {
+        $amount = $this->attributes['subject_amount'] ?? 0;
+        return MoneyHelper::convertToYuan($amount);
+    }
+
+    public function getRoyaltyAmountYuanAttribute(): string
+    {
+        $amount = $this->attributes['royalty_amount'] ?? 0;
+        return MoneyHelper::convertToYuan($amount);
     }
 }
 

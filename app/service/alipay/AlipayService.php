@@ -323,6 +323,24 @@ class AlipayService
     }
     
     /**
+     * 转账到支付宝账户
+     * @param array $transferInfo 转账信息
+     *   - out_biz_no: 商户转账唯一订单号
+     *   - trans_amount: 转账金额
+     *   - payee_type: 收款方账户类型（ALIPAY_USERID/ALIPAY_LOGONID）
+     *   - payee_account: 收款方账户
+     *   - payee_real_name: 收款方真实姓名（可选）
+     *   - remark: 转账备注（可选）
+     * @param array $paymentInfo 支付配置信息
+     * @return array 转账结果
+     * @throws Exception
+     */
+    public function transfer(array $transferInfo, array $paymentInfo): array
+    {
+        return AlipayPaymentService::transfer($transferInfo, $paymentInfo);
+    }
+    
+    /**
      * 验证配置
      * @param array $paymentInfo 支付配置信息
      * @return bool 配置是否有效

@@ -32,7 +32,13 @@ class AlipayConfig
         
         // 通知地址
         $config->notifyUrl = $paymentInfo['notify_url'] ?? '';
-        
+
+        // HTTP超时配置（单位：毫秒）
+//        $config->http = [
+//            'timeout' => ($paymentInfo['http_timeout_ms'] ?? 10000),
+//            'connectTimeout' => ($paymentInfo['http_connect_timeout_ms'] ?? 5000),
+//        ];
+//
         // 证书配置
         // 处理证书路径：如果路径是相对路径，使用base_path；如果已经是绝对路径，直接使用
         $alipayCertPath = $paymentInfo['alipayCertPublicKey'] ?? '';

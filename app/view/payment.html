@@ -2,10 +2,12 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>订单支付 - <?=$subject?></title>
     <script>
-        // 真实二维码生成方案（使用在线API）
+        // 真实二维码生成方案（使用前端库，不依赖第三方API）
         function generateRealQRCode() {
             const qrCodeElement = document.getElementById("qrCode");
             const qrCodeUrl = window.location.href;
@@ -18,49 +20,50 @@
             // 清空容器
             qrCodeElement.innerHTML = "";
             
-            // 创建二维码图片
-            const qrImage = document.createElement('img');
-            qrImage.style.cssText = `
-                width: 180px;
-                height: 180px;
-                border-radius: 8px;
-                border: 2px solid #007bff;
-                background: #fff;
-                display: block;
-                margin: 0 auto;
-            `;
+            // 检查是否已加载 QRCode 库
+            if (typeof QRCode === 'undefined') {
+                console.error("QRCode库未加载，尝试加载...");
+                // 动态加载 qrcodejs 库
+                const script = document.createElement('script');
+                script.src = 'https://cdn.bootcdn.net/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+                script.onerror = function() {
+                    // 如果 bootcdn 失败，尝试 jsdelivr
+                    script.src = 'https://cdn.jsdelivr.net/npm/qrcodejs2@0.0.2/qrcode.min.js';
+                    script.onerror = function() {
+                        console.error("二维码库加载失败");
+                        showFallbackQR();
+                    };
+                };
+                script.onload = function() {
+                    generateQRCodeWithLibrary();
+                };
+                document.head.appendChild(script);
+                return;
+            }
             
-            // 使用多个二维码API作为备用
-            const qrApis = [
-                `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrCodeUrl)}`,
-                `https://chart.googleapis.com/chart?chs=180x180&cht=qr&chl=${encodeURIComponent(qrCodeUrl)}`,
-                `https://qr-server.com/api/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrCodeUrl)}`
-            ];
+            generateQRCodeWithLibrary();
             
-            let currentApiIndex = 0;
-            
-            function tryNextApi() {
-                if (currentApiIndex >= qrApis.length) {
-                    // 所有API都失败，显示备用方案
+            function generateQRCodeWithLibrary() {
+                try {
+                    // 使用 QRCode 库生成二维码
+                    qrCodeElement.innerHTML = "";
+                    new QRCode(qrCodeElement, {
+                        text: qrCodeUrl,
+                        width: 180,
+                        height: 180,
+                        colorDark: "#000000",
+                        colorLight: "#ffffff",
+                        correctLevel: QRCode.CorrectLevel.H
+                    });
+                    console.log("二维码生成成功（使用前端库）");
+                } catch (error) {
+                    console.error("二维码生成失败:", error);
                     showFallbackQR();
-                    return;
                 }
-                
-                qrImage.src = qrApis[currentApiIndex];
-                qrImage.onload = function() {
-                    console.log(`二维码生成成功 (API ${currentApiIndex + 1})`);
-                    qrCodeElement.appendChild(qrImage);
-                };
-                
-                qrImage.onerror = function() {
-                    console.log(`二维码API ${currentApiIndex + 1} 失败，尝试下一个`);
-                    currentApiIndex++;
-                    tryNextApi();
-                };
             }
             
             function showFallbackQR() {
-                console.log("所有二维码API都失败，显示备用方案");
+                console.log("二维码生成失败，显示备用方案");
                 qrCodeElement.innerHTML = `
                     <div style="
                         width: 180px;
@@ -82,15 +85,28 @@
                     </div>
                 `;
             }
-            
-            // 开始尝试第一个API
-            tryNextApi();
         }
         
         // 页面加载完成后生成真实二维码（仅在扫码支付开启时）
         document.addEventListener('DOMContentLoaded', function() {
             <?php if ($scanPayEnabled): ?>
-            setTimeout(generateRealQRCode, 100);
+            // 预加载二维码库
+            const qrcodeScript = document.createElement('script');
+            qrcodeScript.src = 'https://cdn.bootcdn.net/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+            qrcodeScript.onerror = function() {
+                // 如果 bootcdn 失败，尝试 jsdelivr
+                qrcodeScript.src = 'https://cdn.jsdelivr.net/npm/qrcodejs2@0.0.2/qrcode.min.js';
+            };
+            qrcodeScript.onload = function() {
+                setTimeout(generateRealQRCode, 100);
+            };
+            document.head.appendChild(qrcodeScript);
+            // 如果脚本加载较慢，设置超时
+            setTimeout(function() {
+                if (typeof QRCode !== 'undefined') {
+                    generateRealQRCode();
+                }
+            }, 500);
             <?php endif; ?>
             
             // 检查是否需要自动支付（OAuth授权完成后）
@@ -113,81 +129,146 @@
         });
     </script>
     <style>
+        * {
+            box-sizing: border-box;
+        }
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            -webkit-overflow-scrolling: touch;
+        }
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
-            margin: 0;
-            padding: 20px;
             background: #f5f5f5;
-            min-height: 100vh;
             display: flex;
-            align-items: center;
+            align-items: stretch;
             justify-content: center;
+            height: 100vh;
+            height: 100dvh; /* 动态视口高度，支持移动端浏览器 */
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
         }
         .payment-container {
             background: white;
-            border-radius: 12px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-            padding: 30px;
-            max-width: 500px;
+            border-radius: 0;
+            box-shadow: none;
+            padding: 10px 15px;
+            max-width: 100%;
             width: 100%;
             text-align: center;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            overflow-x: hidden;
+            -webkit-overflow-scrolling: touch;
+            /* 移动端优化 */
+            -webkit-tap-highlight-color: transparent;
+            /* 确保容器填满视口 */
+            min-height: 100%;
+            max-height: 100vh;
+            max-height: 100dvh;
+        }
+        /* 移动端适配 */
+        @media (max-width: 768px) {
+            body {
+                padding: 0;
+            }
+            .payment-container {
+                padding: 6px 10px;
+                border-radius: 0;
+                /* 在移动端，容器可以滚动，但确保内容紧凑 */
+            }
+        }
+        
+        /* 确保内容在视口内，不出现整体滚动条 */
+        .payment-container::-webkit-scrollbar {
+            width: 4px;
+        }
+        .payment-container::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .payment-container::-webkit-scrollbar-thumb {
+            background: rgba(0,0,0,0.2);
+            border-radius: 2px;
+        }
+        
+        /* 安全区域适配（iPhone X 等带刘海屏的设备） */
+        @supports (padding: max(0px)) {
+            .payment-container {
+                padding-left: max(10px, env(safe-area-inset-left));
+                padding-right: max(10px, env(safe-area-inset-right));
+                padding-top: max(10px, env(safe-area-inset-top));
+                padding-bottom: max(10px, env(safe-area-inset-bottom));
+            }
         }
         .logo {
-            width: 60px;
-            height: 60px;
+            width: 50px;
+            height: 50px;
             background: #1677ff;
             border-radius: 50%;
-            margin: 0 auto 20px;
+            margin: 0 auto 10px;
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
-            font-size: 24px;
+            font-size: 20px;
             font-weight: bold;
+            flex-shrink: 0;
         }
         .title {
-            font-size: 24px;
+            font-size: 20px;
             color: #333;
-            margin-bottom: 10px;
+            margin-bottom: 5px;
+            font-weight: 600;
         }
         .subtitle {
             color: #666;
-            font-size: 14px;
-            margin-bottom: 30px;
+            font-size: 12px;
+            margin-bottom: 15px;
         }
         .order-info {
             background: #f5f5f5;
-            padding: 20px;
+            padding: 12px;
             border-radius: 8px;
-            margin-bottom: 30px;
+            margin-bottom: 15px;
             text-align: left;
+            flex-shrink: 0;
         }
         .order-item {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 10px;
-            font-size: 14px;
+            margin-bottom: 8px;
+            font-size: 13px;
+            line-height: 1.5;
         }
         .order-item:last-child {
             margin-bottom: 0;
             font-weight: bold;
-            font-size: 16px;
+            font-size: 15px;
             color: #1677ff;
             border-top: 1px solid #e0e0e0;
-            padding-top: 10px;
+            padding-top: 8px;
+            margin-top: 5px;
         }
         .pay-button {
             background: #1677ff;
             color: white;
             border: none;
             border-radius: 8px;
-            padding: 15px 40px;
+            padding: 12px 20px;
             font-size: 16px;
             font-weight: 500;
             cursor: pointer;
             width: 100%;
             transition: all 0.3s ease;
-            margin-bottom: 20px;
+            margin-bottom: 10px;
+            flex-shrink: 0;
+            touch-action: manipulation; /* 移动端优化 */
         }
         .pay-button:hover {
             background: #4096ff;
@@ -221,20 +302,21 @@
             background: #f8f9fa;
             border: 1px solid #e9ecef;
             border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
+            padding: 12px;
+            margin-bottom: 15px;
             text-align: center;
+            flex-shrink: 0;
         }
         .qr-code-title {
-            font-size: 16px;
+            font-size: 14px;
             font-weight: bold;
             color: #333;
-            margin-bottom: 15px;
+            margin-bottom: 10px;
         }
         .qr-code {
-            width: 200px;
-            height: 200px;
-            margin: 0 auto 15px;
+            width: 160px;
+            height: 160px;
+            margin: 0 auto 10px;
             background: white;
             border: 1px solid #ddd;
             border-radius: 8px;
@@ -243,18 +325,25 @@
             justify-content: center;
         }
         .qr-code-text {
-            font-size: 14px;
+            font-size: 12px;
             color: #666;
+        }
+        /* 移动端二维码优化 */
+        @media (max-width: 480px) {
+            .qr-code {
+                width: 140px;
+                height: 140px;
+            }
         }
         .countdown-item {
             border-top: 1px solid #e0e0e0;
-            padding-top: 10px;
-            margin-top: 10px;
+            padding-top: 8px;
+            margin-top: 8px;
         }
         .countdown {
             font-weight: bold;
             color: #ff6b6b;
-            font-size: 16px;
+            font-size: 14px;
         }
         .countdown.warning {
             color: #ff9500;
@@ -271,11 +360,54 @@
             background: #fff9e6;
             border: 1px solid #ffd700;
             border-radius: 8px;
-            padding: 15px;
-            margin-top: 15px;
+            padding: 10px;
+            margin-top: 10px;
             text-align: left;
-            font-size: 13px;
-            line-height: 1.8;
+            font-size: 12px;
+            line-height: 1.6;
+            flex-shrink: 0;
+        }
+        /* 移动端额外优化 */
+        @media (max-width: 480px) {
+            .logo {
+                width: 45px;
+                height: 45px;
+                font-size: 18px;
+                margin-bottom: 8px;
+            }
+            .title {
+                font-size: 18px;
+                margin-bottom: 4px;
+            }
+            .subtitle {
+                font-size: 11px;
+                margin-bottom: 12px;
+            }
+            .order-info {
+                padding: 10px;
+                margin-bottom: 12px;
+            }
+            .order-item {
+                font-size: 12px;
+                margin-bottom: 6px;
+            }
+            .order-item:last-child {
+                font-size: 14px;
+            }
+            .pay-button {
+                padding: 12px;
+                font-size: 15px;
+                margin-bottom: 8px;
+            }
+            .qr-code-container {
+                padding: 10px;
+                margin-bottom: 12px;
+            }
+            .payment-notice {
+                padding: 8px;
+                font-size: 11px;
+                margin-top: 8px;
+            }
         }
         .payment-notice-item {
             margin-bottom: 8px;
@@ -1076,7 +1208,7 @@
             // 立即启动倒计时
             startCountdown();
             
-            // QRCode库会在DOMContentLoaded事件中自动加载
+            // 二维码库会在DOMContentLoaded事件中自动加载并生成二维码
         });
     </script>
 </body>

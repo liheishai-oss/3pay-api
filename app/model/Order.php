@@ -124,6 +124,18 @@ class Order extends Model
     }
 
     /**
+     * 获取关联的支付主体对象（避免与 subject 字段冲突）
+     */
+    public function getSubjectEntity(): ?Subject
+    {
+        // 避免重复查询
+        $this->loadMissing('subject');
+        $subject = $this->getRelationValue('subject');
+
+        return $subject instanceof Subject ? $subject : null;
+    }
+
+    /**
      * 关联分账记录（一对多）
      */
     public function royaltyRecords()
@@ -155,32 +167,37 @@ class Order extends Model
      */
     public function needsRoyalty(): bool
     {
-        // 订单已支付
+        return $this->canProcessRoyalty();
+    }
+
+    /**
+     * 判断分账前置条件，并输出原因
+     */
+    public function canProcessRoyalty(?string &$reason = null): bool
+    {
         if ($this->pay_status !== self::PAY_STATUS_PAID) {
+            $reason = 'not_paid';
             return false;
         }
 
-        // 已存在成功分账记录，不需要重复分账
         if ($this->hasRoyalty()) {
+            $reason = 'already_royalized';
             return false;
         }
 
-        // 检查主体是否配置了分账
-        // 如果 subject 不是对象，尝试重新加载
-        if (!$this->subject) {
+        $subject = $this->getSubjectEntity();
+        if (!$subject) {
+            $reason = 'subject_missing';
             return false;
         }
 
-        // 如果 subject 是字符串（可能是被 toArray() 转换过），尝试重新加载
-        if (!is_object($this->subject)) {
-            $this->load('subject');
-            if (!$this->subject || !is_object($this->subject)) {
-                return false;
-            }
+        if ($subject->royalty_type === Subject::ROYALTY_TYPE_NONE) {
+            $reason = 'royalty_disabled';
+            return false;
         }
 
-        // 分账方式不为"不分账"
-        return $this->subject->royalty_type !== Subject::ROYALTY_TYPE_NONE;
+        $reason = 'ok';
+        return true;
     }
 
     /**

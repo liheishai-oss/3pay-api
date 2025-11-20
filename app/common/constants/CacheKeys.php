@@ -56,6 +56,52 @@ class CacheKeys
     {
         return "royalty:processing:{$orderId}";
     }
+
+    /**
+     * 分账重试队列键
+     * @return string
+     */
+    public static function getRoyaltyRetryQueueKey(): string
+    {
+        return "royalty:retry:queue";
+    }
+
+    /**
+     * 待支付/延迟分账任务队列（Sorted Set用于定时重试）
+     */
+    public static function getRoyaltyPendingQueueKey(): string
+    {
+        return "royalty:pending:queue";
+    }
+
+    /**
+     * 待支付/延迟分账任务数据存储（Hash记录原始payload）
+     */
+    public static function getRoyaltyPendingDataKey(): string
+    {
+        return "royalty:pending:data";
+    }
+
+    /**
+     * 分账失败通知标记键（防止重复推送）
+     * @param int $orderId
+     * @return string
+     */
+    public static function getRoyaltyFailureNotifyKey(int $orderId): string
+    {
+        return "royalty:failure:notify:{$orderId}";
+    }
+
+    /**
+     * 主体特定错误码通知标记键（防止重复推送，如 isv.insufficient-isv-permissions）
+     * @param int $subjectId 主体ID
+     * @param string $errorCode 错误码
+     * @return string
+     */
+    public static function getSubjectErrorNotifyKey(int $subjectId, string $errorCode): string
+    {
+        return "subject:error:notify:{$subjectId}:" . strtolower($errorCode);
+    }
 }
 
 
