@@ -251,7 +251,7 @@ class AlipayRoyaltyService
                 $errorMsg = $transferResponse['sub_msg'] ?? $transferResponse['msg'] ?? '转账失败';
                 $subCode = $transferResponse['sub_code'] ?? '';
                 
-                Log::error("支付宝分账失败", [
+                Log::error("支付宝分账失败1", [
                     'out_biz_no' => $outBizNo,
                     'order_id' => $orderId,
                     'status' => $status,
@@ -276,7 +276,7 @@ class AlipayRoyaltyService
             
         } catch (Throwable $e) {
             $retryable = self::isTimeoutException($e);
-            Log::error("支付宝分账失败", [
+            Log::error("支付宝分账失败2", [
                 'order_info' => $orderInfo,
                 'royalty_info' => $royaltyInfo,
                 'error' => $e->getMessage(),
@@ -286,7 +286,7 @@ class AlipayRoyaltyService
             
             return [
                 'success' => false,
-                'message' => '支付宝分账失败: ' . $e->getMessage(),
+                'message' => '支付宝分账失败3: ' . $e->getMessage(),
                 'data' => [
                     'error' => $e->getMessage(),
                     'exception' => get_class($e),
