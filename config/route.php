@@ -215,9 +215,11 @@ Route::group('/api/v1/admin', function() {
         Route::add(['GET', 'OPTIONS'], '/agent-list', [app\admin\controller\v1\SingleRoyaltyController::class, 'getAgentList']);
         // 分账订单路由
         Route::add(['GET', 'OPTIONS'], '/order-list', [app\admin\controller\v1\SingleRoyaltyController::class, 'orderList']);
+        Route::add(['GET', 'OPTIONS'], '/order-statistics', [app\admin\controller\v1\SingleRoyaltyController::class, 'orderStatistics']);
         Route::add(['GET', 'OPTIONS'], '/order-detail/{id}', [app\admin\controller\v1\SingleRoyaltyController::class, 'orderDetail']);
         Route::add(['POST', 'OPTIONS'], '/order-manual-royalty', [app\admin\controller\v1\SingleRoyaltyController::class, 'manualRoyalty']);
         Route::add(['GET', 'OPTIONS'], '/transfer-order-list', [app\admin\controller\v1\SingleRoyaltyController::class, 'transferOrderList']);
+        Route::add(['GET', 'OPTIONS'], '/transfer-order-statistics', [app\admin\controller\v1\SingleRoyaltyController::class, 'transferOrderStatistics']);
         Route::add(['POST', 'OPTIONS'], '/transfer', [app\admin\controller\v1\SingleRoyaltyController::class, 'transfer']);
     });
 

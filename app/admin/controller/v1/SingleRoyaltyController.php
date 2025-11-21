@@ -837,6 +837,187 @@ class SingleRoyaltyController
             ]);
         }
     }
+
+    /**
+     * 分账订单统计
+     */
+    public function orderStatistics(Request $request)
+    {
+        $userData = $request->userData;
+        $isAgent = ($userData['user_group_id'] ?? 0) == 3;
+        
+        // 支持search参数（JSON格式）
+        $searchJson = $request->get('search', '');
+        $searchParams = [];
+        if ($searchJson) {
+            $searchParams = json_decode($searchJson, true) ?: [];
+        }
+        
+        $platformOrderNo = $searchParams['platform_order_no'] ?? $request->get('platform_order_no', '');
+        $merchantOrderNo = $searchParams['merchant_order_no'] ?? $request->get('merchant_order_no', '');
+        $payStatus = $searchParams['pay_status'] ?? $request->get('pay_status', '');
+        $royaltyStatus = $searchParams['royalty_status'] ?? $request->get('royalty_status', '');
+        $royaltyType = $searchParams['royalty_type'] ?? $request->get('royalty_type', '');
+        $startTime = $searchParams['start_time'] ?? $request->get('start_time', '');
+        $endTime = $searchParams['end_time'] ?? $request->get('end_time', '');
+        $agentId = $searchParams['agent_id'] ?? $request->get('agent_id', '');
+        $merchantId = $searchParams['merchant_id'] ?? $request->get('merchant_id', '');
+
+        $query = \app\model\Order::whereHas('royaltyRecords');
+
+        // 代理商只能看自己的订单
+        if ($isAgent) {
+            $query->where('agent_id', $userData['agent_id']);
+        } elseif ($agentId) {
+            $query->where('agent_id', $agentId);
+        }
+
+        if ($merchantId) {
+            $query->where('merchant_id', $merchantId);
+        }
+
+        if ($platformOrderNo) {
+            $query->where('platform_order_no', 'like', '%' . $platformOrderNo . '%');
+        }
+
+        if ($merchantOrderNo) {
+            $query->where('merchant_order_no', 'like', '%' . $merchantOrderNo . '%');
+        }
+
+        if ($payStatus !== '') {
+            $query->where('pay_status', $payStatus);
+        }
+
+        if ($royaltyStatus !== '') {
+            $query->whereHas('royaltyRecords', function($q) use ($royaltyStatus) {
+                $q->where('royalty_status', $royaltyStatus);
+            });
+        }
+        
+        if ($royaltyType !== '' && $royaltyType !== null) {
+            $query->whereHas('royaltyRecords', function($q) use ($royaltyType) {
+                $q->where('royalty_type', $royaltyType);
+            });
+        }
+        
+        if ($startTime) {
+            $query->where('created_at', '>=', $startTime);
+        }
+
+        if ($endTime) {
+            $query->where('created_at', '<=', $endTime);
+        }
+
+        // 总订单数
+        $totalCount = (clone $query)->count();
+
+        // 各分账状态订单数
+        $pendingCount = (clone $query)->whereHas('royaltyRecords', function($q) {
+            $q->where('royalty_status', \app\model\OrderRoyalty::ROYALTY_STATUS_PENDING);
+        })->count();
+        
+        $processingCount = (clone $query)->whereHas('royaltyRecords', function($q) {
+            $q->where('royalty_status', \app\model\OrderRoyalty::ROYALTY_STATUS_PROCESSING);
+        })->count();
+        
+        $successCount = (clone $query)->whereHas('royaltyRecords', function($q) {
+            $q->where('royalty_status', \app\model\OrderRoyalty::ROYALTY_STATUS_SUCCESS);
+        })->count();
+        
+        $failedCount = (clone $query)->whereHas('royaltyRecords', function($q) {
+            $q->where('royalty_status', \app\model\OrderRoyalty::ROYALTY_STATUS_FAILED);
+        })->count();
+
+        // 总金额统计
+        $totalAmount = (clone $query)->sum('order_amount');
+        
+        // 分账成功订单的总金额
+        $successAmount = (clone $query)->whereHas('royaltyRecords', function($q) {
+            $q->where('royalty_status', \app\model\OrderRoyalty::ROYALTY_STATUS_SUCCESS);
+        })->sum('order_amount');
+
+        // 分账总金额（从分账记录中统计）
+        $royaltyTotalAmount = \app\model\OrderRoyalty::whereHas('order', function($q) use ($query) {
+            $q->whereIn('id', (clone $query)->pluck('id'));
+        })->where('royalty_status', \app\model\OrderRoyalty::ROYALTY_STATUS_SUCCESS)
+          ->sum('royalty_amount');
+        $royaltyTotalAmount = round($royaltyTotalAmount / 100, 2); // 转换为元
+
+        // 成功率计算
+        $successRate = $totalCount > 0 ? round(($successCount / $totalCount) * 100, 2) : 0;
+
+        return success([
+            'total_count' => $totalCount,
+            'pending_count' => $pendingCount,
+            'processing_count' => $processingCount,
+            'success_count' => $successCount,
+            'failed_count' => $failedCount,
+            'total_amount' => round($totalAmount, 2),
+            'success_amount' => round($successAmount, 2),
+            'royalty_total_amount' => $royaltyTotalAmount,
+            'success_rate' => $successRate,
+        ]);
+    }
+
+    /**
+     * 转账订单统计
+     */
+    public function transferOrderStatistics(Request $request)
+    {
+        // 支持search参数（JSON格式）
+        $searchJson = $request->get('search', '');
+        $searchParams = [];
+        if ($searchJson) {
+            $searchParams = json_decode($searchJson, true) ?: [];
+        }
+        
+        $payeeName = $searchParams['payee_name'] ?? $request->get('payee_name', '');
+        $payeeAccount = $searchParams['payee_account'] ?? $request->get('payee_account', '');
+        $subjectId = $searchParams['subject_id'] ?? $request->get('subject_id', '');
+        $startTime = $searchParams['start_time'] ?? $request->get('start_time', '');
+        $endTime = $searchParams['end_time'] ?? $request->get('end_time', '');
+
+        $query = TransferOrder::query();
+
+        if ($subjectId) {
+            $query->where('subject_id', $subjectId);
+        }
+
+        if ($payeeName) {
+            $query->where('payee_name', 'like', '%' . $payeeName . '%');
+        }
+
+        if ($payeeAccount) {
+            $query->where('payee_account', 'like', '%' . $payeeAccount . '%');
+        }
+
+        if ($startTime) {
+            $query->where('transfer_time', '>=', $startTime);
+        }
+
+        if ($endTime) {
+            $query->where('transfer_time', '<=', $endTime);
+        }
+
+        // 总订单数
+        $totalCount = (clone $query)->count();
+
+        // 总金额统计
+        $totalAmount = (clone $query)->sum('amount');
+
+        // 已转账金额（有转账时间的）
+        $transferredAmount = (clone $query)->whereNotNull('transfer_time')->sum('amount');
+
+        // 待转账金额（无转账时间的）
+        $pendingAmount = (clone $query)->whereNull('transfer_time')->sum('amount');
+
+        return success([
+            'total_count' => $totalCount,
+            'total_amount' => round($totalAmount, 2),
+            'transferred_amount' => round($transferredAmount, 2),
+            'pending_amount' => round($pendingAmount, 2),
+        ]);
+    }
 }
 
 
