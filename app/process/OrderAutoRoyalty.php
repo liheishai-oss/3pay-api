@@ -74,10 +74,10 @@ class OrderAutoRoyalty
             $this->processRoyaltyQueue();
         });
 
-        // 每10分钟执行一次兜底扫描（防止队列丢失的情况）
-        new Crontab('0 */10 * * * *', function () {
-            $this->processAutoRoyalty();
-        });
+        // 暂时关闭兜底扫描（每10分钟执行一次兜底扫描）
+        // new Crontab('0 */10 * * * *', function () {
+        //     $this->processAutoRoyalty();
+        // });
 
         // 每30秒检查一次重试队列
         new Crontab('*/30 * * * * *', function () {
