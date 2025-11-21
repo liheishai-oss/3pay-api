@@ -316,7 +316,9 @@ class SingleRoyaltyController
             'royaltyRecords' => function($q) {
                 $q->orderBy('id', 'desc')->limit(1);
             }
-        ])->whereHas('royaltyRecords');
+        ])->whereHas('royaltyRecords', function($q) {
+            $q->where('royalty_type', '!=', Subject::ROYALTY_TYPE_NONE);
+        });
 
         // 代理商只能看自己的订单
         if ($isAgent) {
@@ -863,7 +865,9 @@ class SingleRoyaltyController
         $agentId = $searchParams['agent_id'] ?? $request->get('agent_id', '');
         $merchantId = $searchParams['merchant_id'] ?? $request->get('merchant_id', '');
 
-        $query = \app\model\Order::whereHas('royaltyRecords');
+        $query = \app\model\Order::whereHas('royaltyRecords', function($q) {
+            $q->where('royalty_type', '!=', Subject::ROYALTY_TYPE_NONE);
+        });
 
         // 代理商只能看自己的订单
         if ($isAgent) {
