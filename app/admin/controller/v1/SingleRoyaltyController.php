@@ -366,10 +366,20 @@ class SingleRoyaltyController
             });
         }
 
+        // 使用子查询获取每个订单的最新分账时间，用于排序
+        $query->addSelect(\support\Db::raw('(
+            SELECT MAX(royalty_time) 
+            FROM order_royalty 
+            WHERE order_royalty.order_id = order.id
+        ) as latest_royalty_time'));
+        
+        // 按分账时间降序排序，如果分账时间为空则按订单创建时间降序
+        $query->orderByRaw('COALESCE(latest_royalty_time, order.created_at) DESC')
+              ->orderBy('order.id', 'desc');
+        
         $total = $query->count();
         
-        $list = $query->orderBy('id', 'desc')
-            ->offset(($page - 1) * $limit)
+        $list = $query->offset(($page - 1) * $limit)
             ->limit($limit)
             ->get()
             ->map(function($order) {
