@@ -1118,24 +1118,30 @@ class OrderController
     
     /**
      * 按优先级获取订单标题
-     * 优先级：1.商家自定义 2.平台自定义（主体配置） 3.系统默认
+     * 优先级：1.商家自定义（如果传递了参数且不为空） 2.平台自定义（主体配置） 3.系统默认
+     * 注意：如果商家传递了空字符串，也使用空字符串（不自动填充）
      * @param array $params 请求参数
      * @param Subject $subject 支付主体
      * @return string 订单标题
      */
     private function getOrderSubject(array $params, Subject $subject): string
     {
-        // 1. 商家自定义（从请求参数中获取）
-        if (!empty($params['subject']) && trim($params['subject']) !== '') {
-            return trim($params['subject']);
+        // 1. 如果商家传递了subject参数
+        if (isset($params['subject'])) {
+            // 如果传递了值（非空），使用商家传递的值
+            if (trim($params['subject']) !== '') {
+                return trim($params['subject']);
+            }
+            // 如果传递了空字符串，也使用空字符串（不自动填充默认值）
+            return '';
         }
         
-        // 2. 平台自定义（从主体配置中获取）
+        // 2. 如果商家没有传递subject参数，检查平台自定义（从主体配置中获取）
         if (!empty($subject->custom_product_title) && trim($subject->custom_product_title) !== '') {
             return trim($subject->custom_product_title);
         }
         
-        // 3. 系统默认
+        // 3. 如果平台自定义也没有，使用系统默认
         return '商品支付';
     }
     
