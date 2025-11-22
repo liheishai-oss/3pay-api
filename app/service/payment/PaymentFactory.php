@@ -304,10 +304,14 @@ class PaymentFactory
         $alipayService = new AlipayService();
 
         // 构建支付宝订单信息
-        // 处理subject和body：如果没传递使用默认值
-        $defaultSubject = '商品支付';
-        $productTitle = !empty($orderInfo['subject']) ? trim($orderInfo['subject']) : $defaultSubject;
-        $remark = !empty($orderInfo['body']) ? trim($orderInfo['body']) : $productTitle;
+        // 订单标题已经在订单创建时按优先级设置好了（商家自定义->平台自定义->系统默认）
+        // 这里直接使用即可，如果为空则使用默认值
+        $productTitle = !empty($orderInfo['subject']) && trim($orderInfo['subject']) !== '' 
+            ? trim($orderInfo['subject']) 
+            : '商品支付';
+        $remark = !empty($orderInfo['body']) && trim($orderInfo['body']) !== '' 
+            ? trim($orderInfo['body']) 
+            : $productTitle;
         
         $alipayOrderInfo = [
             'payment_order_number' => $orderInfo['platform_order_no'],

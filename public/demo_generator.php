@@ -482,8 +482,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     </div>
                     
                     <div class="form-group">
-                        <label>订单标题</label>
-                        <input type="text" name="subject" value="测试商品-<?= date('His') ?>" required>
+                        <label>订单标题 (可选)</label>
+                        <input type="text" name="subject" value="测试商品-<?= date('His') ?>" placeholder="留空将使用平台配置或系统默认">
+                        <small>优先级：商家自定义 > 平台自定义 > 系统默认</small>
                     </div>
                     
                     <div class="form-group">

@@ -206,10 +206,6 @@ class OrderController
                 return $this->error('签名验证失败');
             }
             
-            // 处理商品描述参数：如果没传递使用默认值（签名验证之后）
-            $defaultSubject = '商品支付';
-            $orderSubject = !empty($params['subject']) && trim($params['subject']) !== '' ? trim($params['subject']) : $defaultSubject;
-            
             // 验证订单金额
             $amount = floatval($params['amount']);
             if ($amount <= 0) {
@@ -388,6 +384,9 @@ class OrderController
                 $request->getRealIp(),
                 $request->header('user-agent', '')
             );
+            
+            // 按优先级获取订单标题：1.商家自定义 2.平台自定义（主体配置） 3.系统默认
+            $orderSubject = $this->getOrderSubject($params, $subject);
             
             // 验证订单金额是否符合主体限制
             if ($subject->amount_min !== null && $amount < $subject->amount_min) {
@@ -1115,6 +1114,29 @@ class OrderController
             'msg' => $message,
             'data' => null
         ]);
+    }
+    
+    /**
+     * 按优先级获取订单标题
+     * 优先级：1.商家自定义 2.平台自定义（主体配置） 3.系统默认
+     * @param array $params 请求参数
+     * @param Subject $subject 支付主体
+     * @return string 订单标题
+     */
+    private function getOrderSubject(array $params, Subject $subject): string
+    {
+        // 1. 商家自定义（从请求参数中获取）
+        if (!empty($params['subject']) && trim($params['subject']) !== '') {
+            return trim($params['subject']);
+        }
+        
+        // 2. 平台自定义（从主体配置中获取）
+        if (!empty($subject->custom_product_title) && trim($subject->custom_product_title) !== '') {
+            return trim($subject->custom_product_title);
+        }
+        
+        // 3. 系统默认
+        return '商品支付';
     }
     
 }
