@@ -353,12 +353,17 @@ class SingleRoyaltyController
                 $q->where('royalty_type', $royaltyType);
             });
         }
+        // 按分账时间搜索
         if ($startTime) {
-            $query->where('created_at', '>=', $startTime);
+            $query->whereHas('royaltyRecords', function($q) use ($startTime) {
+                $q->where('royalty_time', '>=', $startTime);
+            });
         }
 
         if ($endTime) {
-            $query->where('created_at', '<=', $endTime);
+            $query->whereHas('royaltyRecords', function($q) use ($endTime) {
+                $q->where('royalty_time', '<=', $endTime);
+            });
         }
 
         $total = $query->count();
@@ -819,13 +824,17 @@ class SingleRoyaltyController
                 $query->where('pay_status', $filters['pay_status']);
             }
 
-            if (!empty($filters['start_time'])) {
-                $query->where('created_at', '>=', $filters['start_time']);
-            }
+            // 注意：如果指定了时间范围，这些订单还没有分账记录，没有分账时间
+            // 所以不使用时间过滤，或者只在没有指定时间范围时才同步
+            // 如果指定了时间范围，这些订单不应该出现在搜索结果中（因为它们没有分账时间）
+            // 因此这里移除时间过滤，让这些订单先创建快照，但不会出现在按分账时间搜索的结果中
+            // if (!empty($filters['start_time'])) {
+            //     $query->where('created_at', '>=', $filters['start_time']);
+            // }
 
-            if (!empty($filters['end_time'])) {
-                $query->where('created_at', '<=', $filters['end_time']);
-            }
+            // if (!empty($filters['end_time'])) {
+            //     $query->where('created_at', '<=', $filters['end_time']);
+            // }
 
             $query->orderBy('id', 'desc')
                 ->limit(200)
@@ -904,12 +913,17 @@ class SingleRoyaltyController
             });
         }
         
+        // 按分账时间搜索
         if ($startTime) {
-            $query->where('created_at', '>=', $startTime);
+            $query->whereHas('royaltyRecords', function($q) use ($startTime) {
+                $q->where('royalty_time', '>=', $startTime);
+            });
         }
 
         if ($endTime) {
-            $query->where('created_at', '<=', $endTime);
+            $query->whereHas('royaltyRecords', function($q) use ($endTime) {
+                $q->where('royalty_time', '<=', $endTime);
+            });
         }
 
         // 总订单数

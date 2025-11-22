@@ -74,27 +74,29 @@ class OrderAutoRoyalty
             $this->processRoyaltyQueue();
         });
 
-        // 暂时关闭兜底扫描（每10分钟执行一次兜底扫描）
+        // 已关闭兜底扫描（每10分钟执行一次兜底扫描，扫描数据库中的订单）
         // new Crontab('0 */10 * * * *', function () {
         //     $this->processAutoRoyalty();
         // });
 
-        // 每30秒检查一次重试队列
+        // 每30秒检查一次重试队列（失败分账自动重试，最多3次）
         new Crontab('*/30 * * * * *', function () {
             $this->processRoyaltyRetryQueue();
         });
 
-        // 每15秒处理一次待支付/延迟补偿队列
+        // 每15秒处理一次待支付/延迟补偿队列（支付状态未更新时的补偿）
         new Crontab('*/15 * * * * *', function () {
             $this->processRoyaltyPendingQueue();
         });
 
         Log::info('订单自动分账任务已启动', [
             'queue_interval' => '每1秒',
-            'fallback_interval' => '每10分钟',
-            'pending_interval' => '每15秒',
+            'fallback_interval' => '已关闭（数据库扫描兜底机制）',
+            'retry_interval' => '每30秒（失败分账自动重试，最多3次）',
+            'pending_interval' => '每15秒（待支付补偿队列）',
             'queue_batch_size' => self::QUEUE_BATCH_SIZE,
-            'fallback_batch_size' => self::BATCH_SIZE
+            'fallback_batch_size' => self::BATCH_SIZE,
+            'note' => '数据库扫描兜底机制已关闭，失败分账仍会自动重试'
         ]);
     }
 

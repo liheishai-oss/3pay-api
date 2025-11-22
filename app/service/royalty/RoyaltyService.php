@@ -495,9 +495,14 @@ class RoyaltyService
                 
             case Subject::ROYALTY_TYPE_SINGLE:
                 // 单笔分账：订单金额先扣除千分之六手续费，再按百分比进行分配
-                $handlingFeeCent = (int) floor($orderAmountCent * 6 / 1000); // 0.6%，向下取整
-                $netAmountCent = max($orderAmountCent - $handlingFeeCent, 0);
-                $royaltyAmountCent = (int) floor($netAmountCent * $royaltyRate / 100);
+                // 手续费率：0.006 (0.6%)
+                $handlingFeeExact = $orderAmountCent * 0.006; // 精确手续费（分）
+                $handlingFeeCent = (int) floor($handlingFeeExact); // 手续费向下取整到整数分
+                // 使用精确净额计算分账金额，确保精度
+                $netAmountExact = $orderAmountCent - $handlingFeeExact; // 精确净额
+                // 分账金额：基于精确净额按比例计算，然后四舍五入到整数分
+                $royaltyAmountExact = $netAmountExact * $royaltyRate / 100; // 精确分账金额
+                $royaltyAmountCent = (int) round($royaltyAmountExact); // 四舍五入到整数分
                 $subjectAmountCent = $orderAmountCent - $royaltyAmountCent;
                 
                 $singleRoyalty = self::getEnabledRoyaltyAccount($subject->agent_id);
@@ -534,9 +539,14 @@ class RoyaltyService
                 
                 // 假设商户收款90%，平台（主体）收款10%（可根据实际业务调整）
                 $merchantRate = 90;
-                $handlingFeeCent = (int) floor($orderAmountCent * 6 / 1000);
-                $netAmountCent = max($orderAmountCent - $handlingFeeCent, 0);
-                $royaltyAmountCent = (int) floor($netAmountCent * $royaltyRate / 100);
+                // 手续费率：0.006 (0.6%)
+                $handlingFeeExact = $orderAmountCent * 0.006; // 精确手续费（分）
+                $handlingFeeCent = (int) floor($handlingFeeExact); // 手续费向下取整到整数分
+                // 使用精确净额计算分账金额，确保精度
+                $netAmountExact = $orderAmountCent - $handlingFeeExact; // 精确净额
+                // 分账金额：基于精确净额按比例计算，然后四舍五入到整数分
+                $royaltyAmountExact = $netAmountExact * $royaltyRate / 100; // 精确分账金额
+                $royaltyAmountCent = (int) round($royaltyAmountExact); // 四舍五入到整数分
                 $subjectAmountCent = $orderAmountCent - $royaltyAmountCent;
                 $singleRoyalty = self::getEnabledRoyaltyAccount($subject->agent_id);
                 
