@@ -161,12 +161,14 @@ class SubjectController
         // 确保id字段正确（使用主体ID）
         $data['id'] = $subjectId;
         
-        // 调试日志：确认返回的ID
+        // 调试日志：确认返回的ID和custom_product_title
         \support\Log::info('主体详情返回', [
             'subject_id' => $subjectId,
             'returned_id' => $data['id'],
             'has_id_field' => isset($data['id']),
             'id_type' => gettype($data['id']),
+            'has_custom_product_title' => isset($data['custom_product_title']),
+            'custom_product_title_value' => $data['custom_product_title'] ?? null,
         ]);
 
         return success($data);
@@ -335,6 +337,7 @@ class SubjectController
                     $subject->company_name = $param['company_name'];
                     $subject->alipay_app_id = $param['alipay_app_id'];
                     $subject->alipay_pid = $param['alipay_pid'] ?? null;
+                    $subject->custom_product_title = $param['custom_product_title'] ?? null;
                     $subject->status = $param['status'] ?? 1;
                     $subject->save();
                     
@@ -386,6 +389,7 @@ class SubjectController
                         'company_name' => $param['company_name'],
                         'alipay_app_id' => $param['alipay_app_id'],
                         'alipay_pid' => $param['alipay_pid'] ?? null,
+                        'custom_product_title' => $param['custom_product_title'] ?? null,
                         'status' => $param['status'] ?? 1,
                     ]);
                     

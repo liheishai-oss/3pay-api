@@ -43,8 +43,12 @@ class DemoGeneratorController
                         'merchant_order_no' => $request->post('merchant_order_no', 'M' . time()),
                         'product_code' => $request->post('product_code', '9469'),
                         'amount' => $request->post('amount', '1'),
-                        'subject' => $request->post('subject', '测试商品'),
                     ];
+                    
+                    // 订单标题：只有传递了才设置，不传递则让API按优先级处理
+                    if ($request->post('subject') !== null && $request->post('subject') !== '') {
+                        $params['subject'] = $request->post('subject');
+                    }
                     
                     if ($request->post('notify_url')) {
                         $params['notify_url'] = $request->post('notify_url');
@@ -520,8 +524,8 @@ class DemoGeneratorController
                     
                     <div class="form-group">
                         <label>订单标题 (可选)</label>
-                        <input type="text" name="subject" value="测试商品-<?= date('His') ?>" placeholder="留空将使用平台配置或系统默认">
-                        <small>优先级：商家自定义 > 平台自定义 > 系统默认</small>
+                        <input type="text" name="subject" placeholder="留空将使用平台配置或系统默认">
+                        <small>优先级：商家自定义 > 平台自定义 > 系统默认。留空不填写将自动使用平台配置或系统默认值</small>
                     </div>
                     
                     <div class="form-group">
@@ -613,7 +617,8 @@ class DemoGeneratorController
             const timestamp = Date.now();
             document.querySelector('input[name="merchant_order_no"]').value = 'M' + timestamp;
             document.querySelector('input[name="amount"]').value = amount;
-            document.querySelector('input[name="subject"]').value = '快速测试商品-' + amount + '元';
+            // 订单标题留空，让API按优先级处理
+            document.querySelector('input[name="subject"]').value = '';
             alert('✅ 已自动填充测试数据，金额: ¥' + amount);
         }
         
