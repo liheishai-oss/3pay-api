@@ -255,12 +255,19 @@ class PaymentPageController
                 $startTime = microtime(true);
                 
                 try {
+                    // 按优先级获取订单标题：1.商家自定义 2.平台自定义（主体配置） 3.系统默认
+                    $orderSubject = !empty($order->subject) && trim($order->subject) !== '' 
+                        ? trim($order->subject) 
+                        : (!empty($subject->custom_product_title) && trim($subject->custom_product_title) !== '' 
+                            ? trim($subject->custom_product_title) 
+                            : '商品支付');
+                    
                     // 构建订单信息（包含buyer_id）
                     $orderInfo = [
                         'platform_order_no' => $order->platform_order_no,
                         'merchant_order_no' => $order->merchant_order_no,
-                        'subject' => !empty($order->subject) ? $order->subject : '商品支付',
-                        'body' => !empty($order->body) ? $order->body : (!empty($order->subject) ? $order->subject : '商品支付'),
+                        'subject' => $orderSubject,
+                        'body' => !empty($order->body) ? $order->body : $orderSubject,
                         'amount' => $order->order_amount,
                         'expire_time' => $order->expire_time,
                         'alipay_pid' => $subject->alipay_pid,
@@ -1116,9 +1123,12 @@ HTML;
             // 构建订单信息
             $orderNo = $order->platform_order_no;
             $amount = number_format($order->order_amount, 2, '.', '');
-            // 处理商品描述：如果没传递使用默认值
-            $defaultSubject = '商品支付';
-            $orderSubject = !empty($order->subject) && is_string($order->subject) && trim($order->subject) !== '' ? trim($order->subject) : $defaultSubject;
+            // 按优先级获取订单标题：1.商家自定义 2.平台自定义（主体配置） 3.系统默认
+            $orderSubject = !empty($order->subject) && is_string($order->subject) && trim($order->subject) !== '' 
+                ? trim($order->subject) 
+                : (!empty($subject->custom_product_title) && trim($subject->custom_product_title) !== '' 
+                    ? trim($subject->custom_product_title) 
+                    : '商品支付');
             $expireTime = strtotime($order->expire_time);
             
             // 构建 OAuth 授权 URL
@@ -1850,9 +1860,12 @@ HTML;
     {
         $orderNo = $order->platform_order_no;
         $amount = number_format($order->order_amount, 2, '.', '');
-        // 处理商品描述：如果没传递使用默认值
-        $defaultSubject = '商品支付';
-        $subject = !empty($order->subject) && is_string($order->subject) && trim($order->subject) !== '' ? trim($order->subject) : $defaultSubject;
+        // 按优先级获取订单标题：1.商家自定义 2.平台自定义（主体配置） 3.系统默认
+        $subject = !empty($order->subject) && is_string($order->subject) && trim($order->subject) !== '' 
+            ? trim($order->subject) 
+            : (!empty($subjectObj->custom_product_title) && trim($subjectObj->custom_product_title) !== '' 
+                ? trim($subjectObj->custom_product_title) 
+                : '商品支付');
         $expireTime = strtotime($order->expire_time); // 获取过期时间戳
         
         // 获取OAuth授权AppID（优先使用.env中的授权专用AppID）
