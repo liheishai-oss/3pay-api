@@ -93,10 +93,12 @@ class PaymentDemo
             'merchant_order_no' => $params['merchant_order_no'],
             'product_code' => $params['product_code'],
             'amount' => $params['amount'],
-            'subject' => $params['subject'],
         ];
         
-        // 添加可选参数
+        // 添加可选参数（只有传递了才添加，不传递则让API按优先级处理）
+        if (isset($params['subject']) && $params['subject'] !== '') {
+            $requestParams['subject'] = $params['subject'];
+        }
         if (isset($params['notify_url'])) {
             $requestParams['notify_url'] = $params['notify_url'];
         }

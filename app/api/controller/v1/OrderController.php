@@ -285,7 +285,7 @@ class OrderController
                 ->with('cert')
                 ->inRandomOrder()
                 ->first();
-            
+
             if (!$subject) {
                 // 节点4：支付主体选择（失败）
                 OrderLogService::log(
@@ -619,8 +619,14 @@ class OrderController
         } catch (\Exception $e) {
             Log::error('订单创建接口异常', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
+                'trace' => $e->getTraceAsString(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
             ]);
+            // 如果是数组键未定义的错误，返回更详细的错误信息
+            if (strpos($e->getMessage(), 'Undefined array key') !== false) {
+                return $this->error('系统异常: ' . $e->getMessage());
+            }
             return $this->error('系统异常，请稍后重试');
         }
     }
@@ -1126,22 +1132,49 @@ class OrderController
      */
     private function getOrderSubject(array $params, Subject $subject): string
     {
+        // 调试日志：记录参数和主体信息
+        Log::info('获取订单标题', [
+            'has_subject_param' => isset($params['subject']),
+            'subject_param_value' => $params['subject'] ?? 'NOT_SET',
+            'subject_id' => $subject->id ?? null,
+            'custom_product_title' => $subject->custom_product_title ?? 'NOT_SET',
+            'custom_product_title_type' => isset($subject->custom_product_title) ? gettype($subject->custom_product_title) : 'NOT_SET',
+            'custom_product_title_empty' => empty($subject->custom_product_title),
+            'custom_product_title_trimmed' => isset($subject->custom_product_title) ? trim($subject->custom_product_title) : 'NOT_SET',
+        ]);
+        
         // 1. 如果商家传递了subject参数
         if (isset($params['subject'])) {
             // 如果传递了值（非空），使用商家传递的值
             if (trim($params['subject']) !== '') {
+                Log::info('使用商家自定义标题', ['subject' => trim($params['subject'])]);
                 return trim($params['subject']);
             }
             // 如果传递了空字符串，也使用空字符串（不自动填充默认值）
+            Log::info('商家传递了空字符串，返回空字符串');
             return '';
         }
         
         // 2. 如果商家没有传递subject参数，检查平台自定义（从主体配置中获取）
-        if (!empty($subject->custom_product_title) && trim($subject->custom_product_title) !== '') {
-            return trim($subject->custom_product_title);
+        // 确保 custom_product_title 字段存在且不为空
+        if (isset($subject->custom_product_title) && 
+            $subject->custom_product_title !== null && 
+            $subject->custom_product_title !== '' && 
+            trim($subject->custom_product_title) !== '') {
+            $customTitle = trim($subject->custom_product_title);
+            Log::info('使用平台自定义标题', [
+                'custom_product_title' => $customTitle,
+                'subject_id' => $subject->id
+            ]);
+            return $customTitle;
         }
         
         // 3. 如果平台自定义也没有，使用系统默认
+        Log::info('使用系统默认标题', [
+            'default' => '商品支付',
+            'reason' => '商家未传递subject且平台未配置custom_product_title',
+            'subject_id' => $subject->id
+        ]);
         return '商品支付';
     }
     

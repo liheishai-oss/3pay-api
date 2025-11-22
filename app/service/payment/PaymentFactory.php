@@ -306,17 +306,17 @@ class PaymentFactory
         // 构建支付宝订单信息
         // 订单标题已经在订单创建时按优先级设置好了（商家自定义->平台自定义->系统默认）
         // 这里直接使用即可，如果为空则使用默认值
-        $productTitle = !empty($orderInfo['subject']) && trim($orderInfo['subject']) !== '' 
+        $productTitle = (isset($orderInfo['subject']) && !empty($orderInfo['subject']) && trim($orderInfo['subject']) !== '') 
             ? trim($orderInfo['subject']) 
             : '商品支付';
-        $remark = !empty($orderInfo['body']) && trim($orderInfo['body']) !== '' 
+        $remark = (isset($orderInfo['body']) && !empty($orderInfo['body']) && trim($orderInfo['body']) !== '') 
             ? trim($orderInfo['body']) 
             : $productTitle;
         
         $alipayOrderInfo = [
-            'payment_order_number' => $orderInfo['platform_order_no'],
+            'payment_order_number' => $orderInfo['platform_order_no'] ?? '',
             'product_title' => $productTitle,
-            'payment_amount' => number_format($orderInfo['amount'], 2, '.', ''),
+            'payment_amount' => number_format($orderInfo['amount'] ?? 0, 2, '.', ''),
             'order_expiry_time' => $orderInfo['expire_time'] ?? '',
             'pid' => $orderInfo['alipay_pid'] ?? '',
             'remark' => $remark,
@@ -404,7 +404,7 @@ class PaymentFactory
         } catch (AlipayException $e) {
             Log::error("支付宝支付失败", [
                 'method' => $method,
-                'order_number' => $orderInfo['platform_order_no'],
+                'order_number' => $orderInfo['platform_order_no'] ?? '',
                 'error_code' => $e->getErrorCode(),
                 'error_message' => $e->getMessage(),
                 'error_details' => $e->getErrorDetails()
