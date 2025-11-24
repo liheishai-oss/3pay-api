@@ -366,16 +366,19 @@ class SingleRoyaltyController
             });
         }
 
-        // 使用子查询获取每个订单的最新分账时间，用于排序
-        $query->addSelect(\support\Db::raw('(
-            SELECT MAX(royalty_time) 
-            FROM order_royalty 
-            WHERE order_royalty.order_id = order.id
-        ) as latest_royalty_time'));
+        $orderTable = (new \app\model\Order)->getTable();
+        $query->selectRaw("
+            `{$orderTable}`.*,
+            (
+                SELECT MAX(royalty_time)
+                FROM order_royalty
+                WHERE order_royalty.order_id = `{$orderTable}`.id
+            ) as latest_royalty_time
+        ");
         
         // 按分账时间降序排序，如果分账时间为空则按订单创建时间降序
-        $query->orderByRaw('COALESCE(latest_royalty_time, order.created_at) DESC')
-              ->orderBy('order.id', 'desc');
+        $query->orderByRaw('COALESCE(latest_royalty_time, created_at) DESC')
+              ->orderBy('id', 'desc');
         
         $total = $query->count();
         
@@ -385,8 +388,9 @@ class SingleRoyaltyController
             ->map(function($order) {
                 $orderData = $order->toArray();
                 $subject = $order->getSubjectEntity();
-                // 获取最新的分账记录（按 id 降序排列，获取最新的一条）
-                $latestRoyalty = $order->royaltyRecords()->orderBy('id', 'desc')->first();
+                // 获取最新的分账记录（with 已按 id desc 限制一条）
+                $royaltyRecords = $order->royaltyRecords;
+                $latestRoyalty = $royaltyRecords ? $royaltyRecords->first() : null;
                 if ($latestRoyalty) {
                     $orderData['royalty_status_text'] = $latestRoyalty->getStatusText();
                     $orderData['royalty_type'] = $latestRoyalty->royalty_type;
@@ -924,66 +928,39 @@ class SingleRoyaltyController
         }
         
         // 按分账时间搜索
-        if ($startTime) {
-            $query->whereHas('royaltyRecords', function($q) use ($startTime) {
-                $q->where('royalty_time', '>=', $startTime);
-            });
+        $orderIds = (clone $query)->pluck('id');
+
+        if ($orderIds->isEmpty()) {
+            return success([
+                'today_amount' => 0,
+                'yesterday_amount' => 0,
+                'history_amount' => 0,
+            ]);
         }
 
-        if ($endTime) {
-            $query->whereHas('royaltyRecords', function($q) use ($endTime) {
-                $q->where('royalty_time', '<=', $endTime);
-            });
-        }
+        $royaltyQuery = \app\model\OrderRoyalty::whereIn('order_id', $orderIds)
+            ->where('royalty_status', \app\model\OrderRoyalty::ROYALTY_STATUS_SUCCESS);
 
-        // 总订单数
-        $totalCount = (clone $query)->count();
+        $todayStart = date('Y-m-d 00:00:00');
+        $tomorrowStart = date('Y-m-d 00:00:00', strtotime('+1 day'));
+        $yesterdayStart = date('Y-m-d 00:00:00', strtotime('-1 day'));
 
-        // 各分账状态订单数
-        $pendingCount = (clone $query)->whereHas('royaltyRecords', function($q) {
-            $q->where('royalty_status', \app\model\OrderRoyalty::ROYALTY_STATUS_PENDING);
-        })->count();
-        
-        $processingCount = (clone $query)->whereHas('royaltyRecords', function($q) {
-            $q->where('royalty_status', \app\model\OrderRoyalty::ROYALTY_STATUS_PROCESSING);
-        })->count();
-        
-        $successCount = (clone $query)->whereHas('royaltyRecords', function($q) {
-            $q->where('royalty_status', \app\model\OrderRoyalty::ROYALTY_STATUS_SUCCESS);
-        })->count();
-        
-        $failedCount = (clone $query)->whereHas('royaltyRecords', function($q) {
-            $q->where('royalty_status', \app\model\OrderRoyalty::ROYALTY_STATUS_FAILED);
-        })->count();
+        $todayAmount = (clone $royaltyQuery)
+            ->where('royalty_time', '>=', $todayStart)
+            ->where('royalty_time', '<', $tomorrowStart)
+            ->sum('royalty_amount');
 
-        // 总金额统计
-        $totalAmount = (clone $query)->sum('order_amount');
-        
-        // 分账成功订单的总金额
-        $successAmount = (clone $query)->whereHas('royaltyRecords', function($q) {
-            $q->where('royalty_status', \app\model\OrderRoyalty::ROYALTY_STATUS_SUCCESS);
-        })->sum('order_amount');
+        $yesterdayAmount = (clone $royaltyQuery)
+            ->where('royalty_time', '>=', $yesterdayStart)
+            ->where('royalty_time', '<', $todayStart)
+            ->sum('royalty_amount');
 
-        // 分账总金额（从分账记录中统计）
-        $royaltyTotalAmount = \app\model\OrderRoyalty::whereHas('order', function($q) use ($query) {
-            $q->whereIn('id', (clone $query)->pluck('id'));
-        })->where('royalty_status', \app\model\OrderRoyalty::ROYALTY_STATUS_SUCCESS)
-          ->sum('royalty_amount');
-        $royaltyTotalAmount = round($royaltyTotalAmount / 100, 2); // 转换为元
-
-        // 成功率计算
-        $successRate = $totalCount > 0 ? round(($successCount / $totalCount) * 100, 2) : 0;
+        $historyAmount = (clone $royaltyQuery)->sum('royalty_amount');
 
         return success([
-            'total_count' => $totalCount,
-            'pending_count' => $pendingCount,
-            'processing_count' => $processingCount,
-            'success_count' => $successCount,
-            'failed_count' => $failedCount,
-            'total_amount' => round($totalAmount, 2),
-            'success_amount' => round($successAmount, 2),
-            'royalty_total_amount' => $royaltyTotalAmount,
-            'success_rate' => $successRate,
+            'today_amount' => round($todayAmount / 100, 2),
+            'yesterday_amount' => round($yesterdayAmount / 100, 2),
+            'history_amount' => round($historyAmount / 100, 2),
         ]);
     }
 
